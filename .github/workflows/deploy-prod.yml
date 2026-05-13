@@ -33,6 +33,6 @@ jobs:
           aws-region: us-west-1
 
       - name: Deploy to Prod
-        run: npx serverless deploy --stage prod
+        run: npx serverless@3 deploy --stage prod
         env:
           SMARTYRE_API_URL: ${{ vars.SMARTYRE_API_URL }}
