@@ -1,0 +1,344 @@
+{
+  "Comment": "Tracker Update State Machine — Optimized flow for GPS tracker management",
+  "StartAt": "PrepareAndValidate",
+  "States": {
+    "PrepareAndValidate": {
+      "Type": "Pass",
+      "Comment": "Normalize input and set initial values",
+      "Parameters": {
+        "vehicleId.$": "$.vehicleId",
+        "companyId.$": "$.companyId",
+        "newTrackerCode.$": "$.newTrackerCode",
+        "newVehicleType.$": "$.newVehicleType",
+        "actionsPerformed": []
+      },
+      "Next": "UpdateFields"
+    },
+
+    "UpdateFields": {
+      "Type": "Parallel",
+      "Comment": "Execute tracker and vehicle type updates in parallel",
+      "Branches": [
+        {
+          "StartAt": "ShouldEditTracker",
+          "States": {
+            "ShouldEditTracker": {
+              "Type": "Choice",
+              "Comment": "Check if tracker update is needed",
+              "Choices": [
+                {
+                  "Variable": "$.newTrackerCode",
+                  "IsPresent": true,
+                  "Next": "CheckUnitTracker"
+                }
+              ],
+              "Default": "SkipTracker"
+            },
+
+            "CheckUnitTracker": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CheckUnitTrackerArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "companyId.$": "$.Payload.companyId",
+                "newTrackerCode.$": "$.Payload.newTrackerCode",
+                "newVehicleType.$": "$.Payload.newVehicleType",
+                "currentTrackerCode.$": "$.Payload.currentTrackerCode",
+                "currentTboxId.$": "$.Payload.currentTboxId",
+                "currentSmartTyreVehicleId.$": "$.Payload.currentSmartTyreVehicleId",
+                "needsUnbind.$": "$.Payload.needsUnbind",
+                "needsDelete.$": "$.Payload.needsDelete",
+                "needsCreate.$": "$.Payload.needsCreate",
+                "needsEdit.$": "$.Payload.needsEdit",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "TrackerError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "NeedsCleanup"
+            },
+
+            "NeedsCleanup": {
+              "Type": "Choice",
+              "Comment": "Does the current tracker need unbinding/deletion?",
+              "Choices": [
+                {
+                  "Variable": "$.needsUnbind",
+                  "BooleanEquals": true,
+                  "Next": "CleanupTracker"
+                }
+              ],
+              "Default": "NeedsProvision"
+            },
+
+            "CleanupTracker": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CleanupTrackerArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "companyId.$": "$.Payload.companyId",
+                "newTrackerCode.$": "$.Payload.newTrackerCode",
+                "currentSmartTyreVehicleId.$": "$.Payload.currentSmartTyreVehicleId",
+                "needsCreate.$": "$.Payload.needsCreate",
+                "needsEdit.$": "$.Payload.needsEdit",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "TrackerError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "NeedsProvision"
+            },
+
+            "NeedsProvision": {
+              "Type": "Choice",
+              "Comment": "Does a new tracker need to be created?",
+              "Choices": [
+                {
+                  "Variable": "$.needsCreate",
+                  "BooleanEquals": true,
+                  "Next": "ProvisionTracker"
+                },
+                {
+                  "Variable": "$.needsEdit",
+                  "BooleanEquals": true,
+                  "Next": "EditTracker"
+                }
+              ],
+              "Default": "TrackerDone"
+            },
+
+            "ProvisionTracker": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${ProvisionTrackerArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "companyId.$": "$.Payload.companyId",
+                "newTrackerCode.$": "$.Payload.newTrackerCode",
+                "currentSmartTyreVehicleId.$": "$.Payload.currentSmartTyreVehicleId",
+                "newTboxId.$": "$.Payload.newTboxId",
+                "newSmartTyreTboxId.$": "$.Payload.newSmartTyreTboxId",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "TrackerError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "BindAndActivate"
+            },
+
+            "BindAndActivate": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${BindActivateArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "TrackerError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "TrackerDone"
+            },
+
+            "EditTracker": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${EditTrackerArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "TrackerError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "TrackerDone"
+            },
+
+            "TrackerDone": {
+              "Type": "Pass",
+              "Comment": "Tracker branch completed successfully",
+              "End": true
+            },
+
+            "TrackerError": {
+              "Type": "Pass",
+              "Comment": "Tracker branch failed — error details in $.error",
+              "End": true
+            },
+
+            "SkipTracker": {
+              "Type": "Pass",
+              "Comment": "No tracker changes requested",
+              "End": true
+            }
+          }
+        },
+
+        {
+          "StartAt": "ShouldUpdateVehicleType",
+          "States": {
+            "ShouldUpdateVehicleType": {
+              "Type": "Choice",
+              "Comment": "Check if vehicle type update is needed",
+              "Choices": [
+                {
+                  "Variable": "$.newVehicleType",
+                  "IsPresent": true,
+                  "Next": "UpdateVehicleType"
+                }
+              ],
+              "Default": "SkipVehicleType"
+            },
+
+            "UpdateVehicleType": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${UpdateVehicleTypeArn}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$",
+              "ResultSelector": {
+                "vehicleId.$": "$.Payload.vehicleId",
+                "actionsPerformed.$": "$.Payload.actionsPerformed"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "VehicleTypeError",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "Next": "VehicleTypeDone"
+            },
+
+            "VehicleTypeDone": {
+              "Type": "Pass",
+              "End": true
+            },
+
+            "VehicleTypeError": {
+              "Type": "Pass",
+              "Comment": "Vehicle type update failed",
+              "End": true
+            },
+
+            "SkipVehicleType": {
+              "Type": "Pass",
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "NotifyComplete"
+    },
+
+    "NotifyComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Parameters": {
+        "Entries": [
+          {
+            "Source": "asset-manager-service",
+            "DetailType": "TrackerUpdateComplete",
+            "Detail": {
+              "status": "COMPLETED",
+              "results.$": "$"
+            }
+          }
+        ]
+      },
+      "End": true
+    }
+  }
+}

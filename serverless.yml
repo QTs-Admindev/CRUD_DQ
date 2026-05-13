@@ -1,0 +1,189 @@
+service: asset-manager-service
+
+frameworkVersion: '4'
+
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-west-1
+  stage: ${opt:stage, 'dev'}
+  timeout: 30
+  memorySize: 256
+  stackName: ${self:service}-${sls:stage}
+  environment:
+    STAGE: ${sls:stage}
+    SMARTYRE_API_URL: ${env:SMARTYRE_API_URL}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - secretsmanager:DescribeSecret
+          Resource:
+            - arn:aws:secretsmanager:us-west-1:453943530758:secret:SMARTYRE_API_KEY-kHybm5
+            - arn:aws:secretsmanager:us-west-1:453943530758:secret:MYSQL_AURORA_DB_URI-qcW1zj
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+        - Effect: Allow
+          Action:
+            - states:StartExecution
+          Resource:
+            - !Sub arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:TrackerUpdate-${sls:stage}
+
+build:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    target: node20
+    platform: node
+
+package:
+  individually: true
+
+functions:
+  # ─── ASSET CREATION ─────────────────────────────────────────────────────
+
+  createVehicle:
+    handler: src/handlers/assets/create-vehicle.handler
+    description: "[${sls:stage}] Create vehicle in MySQL + SmartTyre"
+
+  createTire:
+    handler: src/handlers/assets/create-tire.handler
+    description: "[${sls:stage}] Create tire in MySQL + SmartTyre"
+
+  createTbox:
+    handler: src/handlers/assets/create-tbox.handler
+    description: "[${sls:stage}] Create TBox in MySQL + SmartTyre"
+
+  createSensor:
+    handler: src/handlers/assets/create-sensor.handler
+    description: "[${sls:stage}] Create sensor in MySQL + SmartTyre"
+
+  bindTire:
+    handler: src/handlers/assets/bind-tire.handler
+    description: "[${sls:stage}] Bind tire to vehicle in SmartTyre"
+
+  bindSensor:
+    handler: src/handlers/assets/bind-sensor.handler
+    description: "[${sls:stage}] Bind sensor to tire in SmartTyre"
+
+  handleSuccess:
+    handler: src/handlers/assets/handle-success.handler
+    description: "[${sls:stage}] Activate asset after creation"
+
+  handleError:
+    handler: src/handlers/assets/handle-error.handler
+    description: "[${sls:stage}] Log error from Step Functions execution"
+
+  idMapping:
+    handler: src/handlers/assets/id-mapping.handler
+    description: "[${sls:stage}] Map local ID to SmartTyre ID"
+
+  # ─── TRACKER MANAGEMENT ────────────────────────────────────────────────
+
+  checkUnitTracker:
+    handler: src/handlers/tracker/check-unit-tracker.handler
+    description: "[${sls:stage}] Check if vehicle has a tracker assigned"
+
+  cleanupTracker:
+    handler: src/handlers/tracker/cleanup-tracker.handler
+    description: "[${sls:stage}] Unbind + optionally delete tracker (atomic)"
+
+  provisionTracker:
+    handler: src/handlers/tracker/provision-tracker.handler
+    description: "[${sls:stage}] Create tracker + ID mapping (atomic)"
+
+  bindActivate:
+    handler: src/handlers/tracker/bind-activate.handler
+    description: "[${sls:stage}] Bind tracker to vehicle + activate (atomic)"
+
+  editTracker:
+    handler: src/handlers/tracker/edit-tracker.handler
+    description: "[${sls:stage}] Update tracker code on existing tracker"
+
+  updateVehicleType:
+    handler: src/handlers/tracker/update-vehicle-type.handler
+    description: "[${sls:stage}] Change vehicle type (car/tractor/trailer)"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP FUNCTIONS — defined as CloudFormation resources (native v4 support)
+# ═══════════════════════════════════════════════════════════════════════════
+
+resources:
+  Resources:
+    TrackerUpdateStateMachine:
+      Type: AWS::StepFunctions::StateMachine
+      Properties:
+        StateMachineName: TrackerUpdate-${sls:stage}
+        RoleArn: !GetAtt StepFunctionsRole.Arn
+        DefinitionString:
+          !Sub
+            - |
+              ${definition}
+            - definition: !Join
+                - ""
+                - - '{"Comment":"Tracker Update — Optimized","StartAt":"PrepareAndValidate","States":{'
+                  - '"PrepareAndValidate":{"Type":"Pass","Parameters":{"vehicleId.$":"$.vehicleId","companyId.$":"$.companyId","newTrackerCode.$":"$.newTrackerCode","newVehicleType.$":"$.newVehicleType","actionsPerformed":[]},"Next":"ShouldEditTracker"},'
+                  - '"ShouldEditTracker":{"Type":"Choice","Choices":[{"Variable":"$.newTrackerCode","IsPresent":true,"Next":"CheckUnitTracker"}],"Default":"ShouldUpdateVehicleType"},'
+                  - '"CheckUnitTracker":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt CheckUnitTrackerLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","companyId.$":"$.Payload.companyId","newTrackerCode.$":"$.Payload.newTrackerCode","newVehicleType.$":"$.Payload.newVehicleType","currentTrackerCode.$":"$.Payload.currentTrackerCode","currentTboxId.$":"$.Payload.currentTboxId","currentSmartTyreVehicleId.$":"$.Payload.currentSmartTyreVehicleId","needsUnbind.$":"$.Payload.needsUnbind","needsDelete.$":"$.Payload.needsDelete","needsCreate.$":"$.Payload.needsCreate","needsEdit.$":"$.Payload.needsEdit","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"NeedsCleanup"},'
+                  - '"NeedsCleanup":{"Type":"Choice","Choices":[{"Variable":"$.needsUnbind","BooleanEquals":true,"Next":"CleanupTracker"}],"Default":"NeedsProvision"},'
+                  - '"CleanupTracker":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt CleanupTrackerLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","companyId.$":"$.Payload.companyId","newTrackerCode.$":"$.Payload.newTrackerCode","currentSmartTyreVehicleId.$":"$.Payload.currentSmartTyreVehicleId","needsCreate.$":"$.Payload.needsCreate","needsEdit.$":"$.Payload.needsEdit","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"NeedsProvision"},'
+                  - '"NeedsProvision":{"Type":"Choice","Choices":[{"Variable":"$.needsCreate","BooleanEquals":true,"Next":"ProvisionTracker"},{"Variable":"$.needsEdit","BooleanEquals":true,"Next":"EditTracker"}],"Default":"ShouldUpdateVehicleType"},'
+                  - '"ProvisionTracker":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt ProvisionTrackerLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","companyId.$":"$.Payload.companyId","newTrackerCode.$":"$.Payload.newTrackerCode","currentSmartTyreVehicleId.$":"$.Payload.currentSmartTyreVehicleId","newTboxId.$":"$.Payload.newTboxId","newSmartTyreTboxId.$":"$.Payload.newSmartTyreTboxId","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"BindAndActivate"},'
+                  - '"BindAndActivate":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt BindActivateLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"ShouldUpdateVehicleType"},'
+                  - '"EditTracker":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt EditTrackerLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"ShouldUpdateVehicleType"},'
+                  - '"ShouldUpdateVehicleType":{"Type":"Choice","Choices":[{"Variable":"$.newVehicleType","IsPresent":true,"Next":"UpdateVehicleType"}],"Default":"Done"},'
+                  - '"UpdateVehicleType":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt UpdateVehicleTypeLambdaFunction.Arn
+                  - '","Payload.$":"$"},"ResultSelector":{"vehicleId.$":"$.Payload.vehicleId","actionsPerformed.$":"$.Payload.actionsPerformed"},"Retry":[{"ErrorEquals":["States.TaskFailed"],"MaxAttempts":2,"BackoffRate":2,"IntervalSeconds":1}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"HandleError","ResultPath":"$.error"}],"Next":"Done"},'
+                  - '"HandleError":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke","Parameters":{"FunctionName":"'
+                  - !GetAtt HandleErrorLambdaFunction.Arn
+                  - '","Payload.$":"$"},"End":true},'
+                  - '"Done":{"Type":"Succeed"}}}'
+
+    StepFunctionsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: TrackerUpdate-StepFunctions-${sls:stage}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: states.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: InvokeLambdas
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource:
+                    - !GetAtt CheckUnitTrackerLambdaFunction.Arn
+                    - !GetAtt CleanupTrackerLambdaFunction.Arn
+                    - !GetAtt ProvisionTrackerLambdaFunction.Arn
+                    - !GetAtt BindActivateLambdaFunction.Arn
+                    - !GetAtt EditTrackerLambdaFunction.Arn
+                    - !GetAtt UpdateVehicleTypeLambdaFunction.Arn
+                    - !GetAtt HandleErrorLambdaFunction.Arn
+                - Effect: Allow
+                  Action: events:PutEvents
+                  Resource: "*"
