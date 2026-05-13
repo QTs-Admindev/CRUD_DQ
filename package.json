@@ -1,5 +1,5 @@
 {
-  "name": "asset-manager-service",
+  "name": "AssetManagerService",
   "version": "1.0.0",
   "description": "Unified Lambda monorepo for asset management: vehicles, tires, sensors, tboxes, trackers",
   "scripts": {

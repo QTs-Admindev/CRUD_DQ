@@ -1,4 +1,4 @@
-service: asset-manager-service
+service: AssetManagerService
 
 frameworkVersion: '3'
 
