@@ -1,0 +1,136 @@
+service: AssetManagerService
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-west-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource: '*'
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!.git/**'
+    - '!tests/**'
+    - '!.github/**'
+    - '!*.md'
+    - '!__pycache__/**'
+    - '!.venv/**'
+    - 'shared/**'
+    - 'functions/**'
+
+functions:
+  createVehicle:
+    handler: functions/vehicles/create.handler
+    events:
+      - http:
+          path: /vehicles
+          method: post
+          cors: true
+
+  updateVehicle:
+    handler: functions/vehicles/update.handler
+    events:
+      - http:
+          path: /vehicles/{id}
+          method: put
+          cors: true
+
+  getVehicle:
+    handler: functions/vehicles/get.handler
+    events:
+      - http:
+          path: /vehicles/{id}
+          method: get
+          cors: true
+
+  createTire:
+    handler: functions/tires/create.handler
+    events:
+      - http:
+          path: /tires
+          method: post
+          cors: true
+
+  updateTire:
+    handler: functions/tires/update.handler
+    events:
+      - http:
+          path: /tires/{id}
+          method: put
+          cors: true
+
+  createSensor:
+    handler: functions/sensors/create.handler
+    events:
+      - http:
+          path: /sensors
+          method: post
+          cors: true
+
+  createTbox:
+    handler: functions/tboxes/create.handler
+    events:
+      - http:
+          path: /tboxes
+          method: post
+          cors: true
+
+  updateTbox:
+    handler: functions/tboxes/update.handler
+    events:
+      - http:
+          path: /tboxes/{id}
+          method: put
+          cors: true
+
+  bindTireToVehicle:
+    handler: functions/bindings/bind_tire.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tires/bind
+          method: post
+          cors: true
+
+  unbindTireFromVehicle:
+    handler: functions/bindings/unbind_tire.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tires/unbind
+          method: post
+          cors: true
+
+  bindSensorToTire:
+    handler: functions/bindings/bind_sensor.handler
+    events:
+      - http:
+          path: /tires/{id}/sensors/bind
+          method: post
+          cors: true
+
+  unbindSensorFromTire:
+    handler: functions/bindings/unbind_sensor.handler
+    events:
+      - http:
+          path: /tires/{id}/sensors/unbind
+          method: post
+          cors: true
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: false
+    slim: true
+    strip: false

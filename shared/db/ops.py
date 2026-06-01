@@ -1,0 +1,33 @@
+import pymysql.cursors
+
+
+def insert(db, table: str, data: dict) -> dict:
+    columns = list(data.keys())
+    placeholders = ["%s"] * len(columns)
+    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(placeholders)})"
+    with db.cursor() as cur:
+        cur.execute(sql, list(data.values()))
+        last_id = cur.lastrowid
+    return get_by_id(db, table, last_id)
+
+
+def update(db, table: str, record_id: int, data: dict) -> dict:
+    sets = [f"{k} = %s" for k in data.keys()]
+    sql = f"UPDATE {table} SET {', '.join(sets)} WHERE id = %s"
+    with db.cursor() as cur:
+        cur.execute(sql, list(data.values()) + [record_id])
+    return get_by_id(db, table, record_id)
+
+
+def get_by_id(db, table: str, record_id: int) -> dict | None:
+    sql = f"SELECT * FROM {table} WHERE id = %s"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, [record_id])
+        return cur.fetchone()
+
+
+def get_by_field(db, table: str, field: str, value) -> dict | None:
+    sql = f"SELECT * FROM {table} WHERE {field} = %s"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, [value])
+        return cur.fetchone()
