@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .serverless/
 node_modules/
+package-lock.json
 .requirements/
 .env
 *.zip

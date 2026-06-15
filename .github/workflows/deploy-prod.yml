@@ -34,7 +34,7 @@ jobs:
       - name: Install Serverless Framework
         run: |
           npm install -g serverless@3
-          serverless plugin install -n serverless-python-requirements
+          npm install
 
       - name: Deploy to AWS Lambda (prod)
         run: serverless deploy --stage prod --verbose

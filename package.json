@@ -1,0 +1,9 @@
+{
+  "name": "asset-manager-service",
+  "version": "1.0.0",
+  "description": "Asset Manager Service - Fleet Management",
+  "devDependencies": {
+    "serverless": "^3.0.0",
+    "serverless-python-requirements": "^6.1.1"
+  }
+}
