@@ -89,6 +89,14 @@ functions:
           method: post
           cors: true
 
+  listAssets:
+    handler: functions/lists/list_assets.handler
+    events:
+      - http:
+          path: /list/{resource}
+          method: get
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:
