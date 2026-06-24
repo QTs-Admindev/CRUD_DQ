@@ -1,53 +1,50 @@
 import json
 
-from pydantic import BaseModel, ValidationError
-
+from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
 from shared.smarttyre.client import SmartTyreClient
+from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
 
-class UnbindSensorRequest(BaseModel):
-    sensor_id: int
-
-
 def handler(event, context):
+    # path: /tires/{id}/sensors/unbind  -> id = llanta local. Desvincula el sensor actual.
     try:
-        tire_id = int(event["pathParameters"]["id"])
+        tire_id = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
         return error(400, "id de llanta inválido")
 
-    try:
-        body = UnbindSensorRequest.model_validate(json.loads(event.get("body") or "{}"))
-    except ValidationError as e:
-        return error(422, e.errors())
-
     db = get_db()
-    tire = get_by_id(db, "tires", tire_id)
+    tire = get_by_id(db, t("tires"), tire_id)
     if not tire:
         return error(404, "Llanta no encontrada")
+    sensor_id = tire.get("sensor_id")
+    if not sensor_id:
+        return error(409, "La llanta no tiene un sensor vinculado")
 
-    sensor = get_by_id(db, "sensors", body.sensor_id)
-    if not sensor:
-        return error(404, "Sensor no encontrado")
-
-    if sensor.get("tire_id") != tire_id:
-        return error(409, "El sensor no está vinculado a esta llanta")
+    sensor = get_by_id(db, t("sensors"), sensor_id)
+    unit = get_by_id(db, t("units"), tire["unit_id"]) if tire.get("unit_id") else None
 
     try:
         st = SmartTyreClient()
         st.post("/smartyre/openapi/tyre/sensor/unbind", {
-            "tyreId": tire["smarttyre_id"],
-            "sensorId": sensor["smarttyre_id"],
+            "tyreCode": str(tire_id),
+            "vehicleId": unit.get("daijin_id") if unit else None,
+            "axleIndex": tire.get("axle_index"),
+            "wheelIndex": tire.get("wheel_index"),
+            "sensorCode": sensor.get("sensorCode") if sensor else None,
         })
     except Exception as e:
-        return error(502, f"SmartTyre error: {e}")
+        return error(502, f"Dajin error (unbind sensor): {e}")
 
     try:
-        record = update(db, "sensors", body.sensor_id, {"tire_id": None})
+        rec = update(db, t("tires"), tire_id, {
+            "sensor_id": None,
+            "updated_at": now_ms(),
+        })
         db.commit()
-        return ok(record)
+        return ok(rec)
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error: {e}")
+        return error(500, f"DB error (unbind sensor local): {e}")
