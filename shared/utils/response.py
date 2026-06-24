@@ -1,10 +1,16 @@
 import json
 
+# CORS: en proxy integration el header debe venir del handler, no del gateway.
+_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+}
+
 
 def ok(data) -> dict:
     return {
         "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _HEADERS,
         "body": json.dumps(data, default=str),
     }
 
@@ -12,7 +18,7 @@ def ok(data) -> dict:
 def error(status_code: int, message) -> dict:
     return {
         "statusCode": status_code,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _HEADERS,
         "body": json.dumps({"error": message}, default=str),
     }
 
@@ -24,7 +30,7 @@ def pending(data) -> dict:
     """
     return {
         "statusCode": 202,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _HEADERS,
         "body": json.dumps(
             {
                 "status": "registering",
