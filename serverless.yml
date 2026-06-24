@@ -5,10 +5,13 @@ frameworkVersion: '3'
 provider:
   name: aws
   runtime: python3.12
-  region: us-west-1
+  region: us-east-1
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 30
+  environment:
+    # Prefijo de tablas: "test_" para probar contra los clones sin tocar datos reales.
+    TABLE_PREFIX: ${env:TABLE_PREFIX, ''}
   iam:
     role:
       statements:

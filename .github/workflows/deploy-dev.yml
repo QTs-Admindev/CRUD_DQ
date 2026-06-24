@@ -30,7 +30,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-1
+          aws-region: us-east-1
 
       - name: Install Serverless Framework
         run: |
@@ -38,6 +38,10 @@ jobs:
           npm install
 
       - name: Deploy to AWS Lambda (dev)
+        env:
+          # TEMPORAL: el dev escribe en las tablas test_ (clones) mientras probamos.
+          # Quitar cuando se quiera apuntar a las tablas reales.
+          TABLE_PREFIX: test_
         run: serverless deploy --stage dev --verbose
 
       - name: Display endpoints

@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-from shared.secrets.manager import get_secret
+from shared.secrets.manager import get_secret_json
 from shared.smarttyre.sign import compute_sign
 
 _token: str | None = None
@@ -13,10 +13,11 @@ _token_expires_at: float = 0
 
 class SmartTyreClient:
     def __init__(self):
-        self._base_url = get_secret("SMARTTYRE_BASE_URL")
-        self._client_id = get_secret("SMARTTYRE_CLIENT_ID")
-        self._client_secret = get_secret("SMARTTYRE_CLIENT_SECRET")
-        self._sign_key = get_secret("SMARTTYRE_SIGN_KEY")
+        creds = get_secret_json("DCredentials")
+        self._base_url = creds["BASE_URL"]
+        self._client_id = creds["CLIENT_ID"]
+        self._client_secret = creds["CLIENT_SECRET"]
+        self._sign_key = creds["SIGN_KEY"]
         self._access_token = self._get_token()
 
     def _get_token(self) -> str:

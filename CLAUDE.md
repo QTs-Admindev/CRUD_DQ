@@ -60,7 +60,7 @@ Si MySQL falla después de SmartTyre → loguear el `smarttyre\_id` para rollbac
 
 | Credenciales | AWS Secrets Manager |
 
-| Región AWS | us-west-1 |
+| Región AWS | us-east-1 |
 
 
 
@@ -384,15 +384,9 @@ smarttyre\_id = resp\["records"]\[0]\["id"]  # ← así se obtiene
 
 |---|---|---|
 
-| `SMARTTYRE\_BASE\_URL` | String | URL base de la API |
+| `DCredentials` | JSON String | `{"BASE_URL":"...","CLIENT_ID":"...","CLIENT_SECRET":"...","SIGN_KEY":"..."}` — credenciales de SmartTyre/Dajin |
 
-| `SMARTTYRE\_CLIENT\_ID` | String | clientId para auth |
-
-| `SMARTTYRE\_CLIENT\_SECRET` | String | clientSecret para auth |
-
-| `SMARTTYRE\_SIGN\_KEY` | String | clave para firma MD5 |
-
-| `MYSQL\_DB\_URI` | JSON String | `{"host":"...","user":"...","password":"...","db":"..."}` |
+| `MYSQL\_URI` | JSON String | `{"MYSQL_URI":"mysql+mysqlconnector://user:pass@host:3306/db"}` — URI estilo SQLAlchemy (PyMySQL usa solo los componentes) |
 
 
 
