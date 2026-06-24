@@ -31,3 +31,13 @@ def get_by_field(db, table: str, field: str, value) -> dict | None:
     with db.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(sql, [value])
         return cur.fetchone()
+
+
+def get_by_fields(db, table: str, filters: dict) -> dict | None:
+    """Busca por una llave compuesta (varios campos AND). Para natural keys como
+    (prefix, folio, company_id) en tires o (unit_identifier, company_id, unit_catalog_id)."""
+    where = " AND ".join(f"{k} = %s" for k in filters)
+    sql = f"SELECT * FROM {table} WHERE {where} LIMIT 1"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, list(filters.values()))
+        return cur.fetchone()
