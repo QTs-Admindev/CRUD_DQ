@@ -105,6 +105,14 @@ functions:
           method: post
           cors: true
 
+  unbindTbox:
+    handler: functions/vehicles/unbind_tbox.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tbox/unbind
+          method: post
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:
