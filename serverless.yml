@@ -97,6 +97,14 @@ functions:
           method: get
           cors: true
 
+  bindTbox:
+    handler: functions/vehicles/bind_tbox.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tbox/bind
+          method: post
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:
