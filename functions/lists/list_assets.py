@@ -1,6 +1,6 @@
 import json
 
-from shared.config import t
+from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_many
 from shared.utils.response import error, ok
@@ -21,12 +21,15 @@ def handler(event, context):
         return error(404, f"recurso inválido: {resource} (usa {list(RESOURCES)})")
 
     qs = event.get("queryStringParameters") or {}
-    filters = {"is_deleted": 0}  # los soft-deleted no se listan
+    filters = {"is_deleted": 0}  # soft-deleted rows are never listed
     if qs.get("company_id"):
         try:
-            filters["company_id"] = int(qs["company_id"])
+            company_id = int(qs["company_id"])
         except ValueError:
-            return error(422, "company_id debe ser entero")
+            return error(422, "company_id must be an integer")
+        # Admin company sees everything (incl. unassigned inventory); others only their own.
+        if company_id != ADMIN_COMPANY_ID:
+            filters["company_id"] = company_id
 
     db = get_db()
     try:

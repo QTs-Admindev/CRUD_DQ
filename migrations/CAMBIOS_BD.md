@@ -20,6 +20,7 @@
 | 5 | Columna `is_deleted` (soft delete) | units, tires, sensors, tboxes | ⏳ por aplicar | ⏳ pendiente |
 | 6 | (Futuro) Retirar tablas `*_id_mapping` | mapping | — | ⏳ pendiente (al final) |
 | 7 | Folio único por compañía (regla en código) | tires | ✅ en código | ⏳ constraint DB opcional |
+| 8 | `company_id` nullable (inventario sin asignar) | sensors | ⏳ por aplicar | ⏳ pendiente |
 
 ---
 
@@ -106,6 +107,28 @@ la compañía con otro `prefix`, responde **409**.
   ALTER TABLE tires ADD UNIQUE KEY uq_tires_folio_company (folio, company_id);
   ```
   ⚠️ Solo si el paso 1 devuelve 0 filas. Si hay duplicados, resolverlos antes.
+
+## Cambio 8 — Inventario de sensores/tboxes sin compañía (`company_id` nullable)
+
+Modelo: los sensores y tboxes (hardware que llega físicamente) se **registran en
+inventario SIN compañía** (`company_id = NULL`); la compañía se asigna después con una
+operación independiente. La **empresa 2** (administradora, hardcodeada) ve todo el
+inventario; cualquier otra ve solo lo suyo (`WHERE company_id = X`).
+
+`sensors.company_id` hoy es `NOT NULL` (tboxes ya es nullable). Para permitir el NULL:
+
+```sql
+ALTER TABLE sensors MODIFY COLUMN company_id BIGINT NULL;
+```
+
+**Reglas de bloqueo (en código):** no se puede reasignar compañía ni borrar un sensor/tbox
+si está vinculado (sensor en `tires.sensor_id`, tbox en `units.tbox_id`) → responde 409.
+
+**Implicaciones en el código (pendientes):**
+- Create de sensor/tbox: ya no recibe `company_id` (queda NULL). Se quita `version`.
+- `/list/sensors|tboxes`: si la empresa es la 2 → sin filtro de company; si no → filtra.
+- Nuevo endpoint "assign" para setear `company_id` (con guard de "no vinculado").
+- Delete: guard de "no vinculado".
 
 ---
 

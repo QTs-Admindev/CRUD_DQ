@@ -11,13 +11,13 @@ from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 from shared.utils.validators import validate_hex12
 
-# Versión por defecto de firmware con que el sistema viejo registra sensores.
+# Default firmware version sent to Dajin (legacy default). Not stored locally.
 SENSOR_VERSION = "404"
 
 
 class CreateSensorRequest(BaseModel):
+    # Sensors are registered into inventory WITHOUT a company; assigned later.
     sensor_code: str
-    company_id: int
 
     @field_validator("sensor_code")
     @classmethod
@@ -26,7 +26,7 @@ class CreateSensorRequest(BaseModel):
 
 
 def handler(event, context):
-    # 1. Validar input
+    # 1. Validate input
     try:
         body = CreateSensorRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
@@ -34,26 +34,24 @@ def handler(event, context):
 
     db = get_db()
 
-    # 2. Local-first con idempotencia: insertar `registering` (o retomar si ya existe).
+    # 2. Local-first with idempotency: insert `registering` (or resume if it exists).
     try:
         existing = get_by_field(db, t("sensors"), "sensorCode", body.sensor_code)
         if existing and existing.get("daijin_id"):
-            return ok(existing)  # ya sincronizado: nada que hacer
+            return ok(existing)  # already synced
         if existing:
-            local_id = existing["id"]  # quedó a medias antes; lo retomamos
+            local_id = existing["id"]  # resume a half-finished registration
         else:
             try:
                 rec = insert(db, t("sensors"), {
                     "sensorCode": body.sensor_code,
-                    "company_id": body.company_id,
-                    "version": SENSOR_VERSION,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })
-                db.commit()  # durable antes de hablar con Dajin
+                db.commit()  # durable before talking to Dajin
                 local_id = rec["id"]
             except Exception:
-                # Carrera/clave duplicada: otro proceso lo creó en paralelo -> retomar.
+                # Race / duplicate key: another process created it -> resume.
                 db.rollback()
                 existing = get_by_field(db, t("sensors"), "sensorCode", body.sensor_code)
                 if not existing:
@@ -65,7 +63,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (insert sensor): {e}")
 
-    # 3. Sincronizar con Dajin (idempotente). Natural key = sensorCode.
+    # 3. Sync with Dajin (idempotent). Natural key = sensorCode.
     try:
         st = SmartTyreClient()
         daijin_id = resolve_or_create(
@@ -76,13 +74,11 @@ def handler(event, context):
             insert_payload={"sensorCode": body.sensor_code, "version": SENSOR_VERSION},
         )
     except SmartTyreNotResolved:
-        # Creado pero aún no resuelto -> queda registering; lo retoma la reconciliación.
         return pending(get_by_id(db, t("sensors"), local_id))
     except Exception as e:
-        # Dajin caído/timeout -> queda registering; la reconciliación lo retoma.
         return pending({"id": local_id, "sensorCode": body.sensor_code, "reason": str(e)})
 
-    # 4. Confirmar el match y activar.
+    # 4. Confirm the match and activate.
     try:
         rec = update(db, t("sensors"), local_id, {
             "daijin_id": daijin_id,

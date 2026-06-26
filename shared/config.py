@@ -7,5 +7,9 @@ TABLE_PREFIX = os.environ.get("TABLE_PREFIX", "")
 
 
 def t(name: str) -> str:
-    """Devuelve el nombre de tabla con el prefijo de entorno aplicado."""
+    """Return the table name with the environment prefix applied."""
     return f"{TABLE_PREFIX}{name}"
+
+
+# Admin/provider company: sees the whole inventory (including unassigned sensors/tboxes).
+ADMIN_COMPANY_ID = 2

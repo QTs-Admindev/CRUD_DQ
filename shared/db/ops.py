@@ -47,6 +47,15 @@ def get_many(db, table: str, columns: str = "*", filters: dict | None = None,
         return list(cur.fetchall())
 
 
+def exists(db, table: str, filters: dict) -> bool:
+    """True if at least one row matches all filters. Used for binding guards."""
+    where = " AND ".join(f"{k} = %s" for k in filters)
+    sql = f"SELECT 1 FROM {table} WHERE {where} LIMIT 1"
+    with db.cursor() as cur:
+        cur.execute(sql, list(filters.values()))
+        return cur.fetchone() is not None
+
+
 def soft_delete(db, table: str, record_id: int) -> dict | None:
     """Soft delete: marca is_deleted=1 sin borrar la fila (conserva historial + daijin_id)."""
     sql = f"UPDATE {table} SET is_deleted = 1 WHERE id = %s"

@@ -13,8 +13,8 @@ from shared.utils.validators import validate_hex12
 
 
 class CreateTboxRequest(BaseModel):
+    # Tboxes are registered into inventory WITHOUT a company; assigned later.
     tbox_code: str
-    company_id: int
 
     @field_validator("tbox_code")
     @classmethod
@@ -23,7 +23,7 @@ class CreateTboxRequest(BaseModel):
 
 
 def handler(event, context):
-    # 1. Validar input
+    # 1. Validate input
     try:
         body = CreateTboxRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
@@ -31,7 +31,7 @@ def handler(event, context):
 
     db = get_db()
 
-    # 2. Local-first con idempotencia: insertar `registering` (o retomar si ya existe).
+    # 2. Local-first with idempotency: insert `registering` (or resume if it exists).
     try:
         existing = get_by_field(db, t("tboxes"), "tboxCode", body.tbox_code)
         if existing and existing.get("daijin_id"):
@@ -42,14 +42,13 @@ def handler(event, context):
             try:
                 rec = insert(db, t("tboxes"), {
                     "tboxCode": body.tbox_code,
-                    "company_id": body.company_id,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })
                 db.commit()
                 local_id = rec["id"]
             except Exception:
-                # Carrera/clave duplicada: otro proceso lo creó en paralelo -> retomar.
+                # Race / duplicate key: another process created it -> resume.
                 db.rollback()
                 existing = get_by_field(db, t("tboxes"), "tboxCode", body.tbox_code)
                 if not existing:
@@ -61,7 +60,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (insert tbox): {e}")
 
-    # 3. Sincronizar con Dajin (idempotente). Natural key = tboxCode (hardware externo).
+    # 3. Sync with Dajin (idempotent). Natural key = tboxCode (external hardware code).
     try:
         st = SmartTyreClient()
         daijin_id = resolve_or_create(
@@ -76,7 +75,7 @@ def handler(event, context):
     except Exception as e:
         return pending({"id": local_id, "tboxCode": body.tbox_code, "reason": str(e)})
 
-    # 4. Confirmar el match y activar.
+    # 4. Confirm the match and activate.
     try:
         rec = update(db, t("tboxes"), local_id, {
             "daijin_id": daijin_id,

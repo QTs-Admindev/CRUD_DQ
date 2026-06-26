@@ -1,11 +1,11 @@
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, soft_delete
+from shared.db.ops import exists, get_by_id, soft_delete
 from shared.utils.response import error, ok
 
 
 def handler(event, context):
-    # DELETE /vehicles/{id} -> soft delete (marca is_deleted=1, no borra la fila).
+    # DELETE /vehicles/{id} -> soft delete (sets is_deleted=1, keeps the row).
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
@@ -16,11 +16,14 @@ def handler(event, context):
     if not rec:
         return error(404, "Vehículo no encontrado")
     if rec.get("is_deleted"):
-        return ok(rec)  # ya estaba borrado -> idempotente
+        return ok(rec)  # already deleted -> idempotent
+    # Cannot delete while it has mounted tires or an assigned tbox; unbind first.
+    if rec.get("tbox_id") or exists(db, t("tires"), {"unit_id": rid, "is_deleted": 0}):
+        return error(409, "El vehículo tiene llantas o tbox; desvincula primero")
 
-    # TODO Dajin: el contrato de borrado de Dajin NO está confirmado (no existe en el
-    # código v1 ni en asset-manager; Dajin maneja isDeleted internamente). Confirmar
-    # vía la sección OpenAPI de Dajin / soporte antes de wirear el borrado remoto.
+    # TODO Dajin: remote delete contract not confirmed. There is no delete endpoint in the
+    # v1/asset-manager references; Dajin tracks isDeleted internally. Confirm via the Dajin
+    # OpenAPI section / support before wiring the remote delete.
 
     try:
         rec = soft_delete(db, t("units"), rid)

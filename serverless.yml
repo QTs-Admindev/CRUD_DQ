@@ -145,6 +145,22 @@ functions:
           method: delete
           cors: true
 
+  assignSensor:
+    handler: functions/sensors/assign.handler
+    events:
+      - http:
+          path: /sensors/{id}/assign
+          method: post
+          cors: true
+
+  assignTbox:
+    handler: functions/tboxes/assign.handler
+    events:
+      - http:
+          path: /tboxes/{id}/assign
+          method: post
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:
