@@ -47,6 +47,14 @@ def get_many(db, table: str, columns: str = "*", filters: dict | None = None,
         return list(cur.fetchall())
 
 
+def soft_delete(db, table: str, record_id: int) -> dict | None:
+    """Soft delete: marca is_deleted=1 sin borrar la fila (conserva historial + daijin_id)."""
+    sql = f"UPDATE {table} SET is_deleted = 1 WHERE id = %s"
+    with db.cursor() as cur:
+        cur.execute(sql, [record_id])
+    return get_by_id(db, table, record_id)
+
+
 def get_by_fields(db, table: str, filters: dict) -> dict | None:
     """Busca por una llave compuesta (varios campos AND). Para natural keys como
     (prefix, folio, company_id) en tires o (unit_identifier, company_id, unit_catalog_id)."""

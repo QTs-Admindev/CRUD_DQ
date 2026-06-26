@@ -113,6 +113,38 @@ functions:
           method: post
           cors: true
 
+  deleteVehicle:
+    handler: functions/vehicles/delete.handler
+    events:
+      - http:
+          path: /vehicles/{id}
+          method: delete
+          cors: true
+
+  deleteTire:
+    handler: functions/tires/delete.handler
+    events:
+      - http:
+          path: /tires/{id}
+          method: delete
+          cors: true
+
+  deleteSensor:
+    handler: functions/sensors/delete.handler
+    events:
+      - http:
+          path: /sensors/{id}
+          method: delete
+          cors: true
+
+  deleteTbox:
+    handler: functions/tboxes/delete.handler
+    events:
+      - http:
+          path: /tboxes/{id}
+          method: delete
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:

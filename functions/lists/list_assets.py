@@ -21,10 +21,10 @@ def handler(event, context):
         return error(404, f"recurso inválido: {resource} (usa {list(RESOURCES)})")
 
     qs = event.get("queryStringParameters") or {}
-    filters = None
+    filters = {"is_deleted": 0}  # los soft-deleted no se listan
     if qs.get("company_id"):
         try:
-            filters = {"company_id": int(qs["company_id"])}
+            filters["company_id"] = int(qs["company_id"])
         except ValueError:
             return error(422, "company_id debe ser entero")
 

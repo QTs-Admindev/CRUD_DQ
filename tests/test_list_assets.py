@@ -33,4 +33,4 @@ def test_company_filter_parsed(monkeypatch):
 
     mod.handler({"pathParameters": {"resource": "tires"},
                  "queryStringParameters": {"company_id": "100"}}, None)
-    assert seen["filters"] == {"company_id": 100}
+    assert seen["filters"] == {"is_deleted": 0, "company_id": 100}

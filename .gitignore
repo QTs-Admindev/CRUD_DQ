@@ -9,3 +9,5 @@ package-lock.json
 .venv/
 venv/
 tester.html
+.claude/
+.playwright-cli/
