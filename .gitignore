@@ -11,3 +11,6 @@ venv/
 tester.html
 .claude/
 .playwright-cli/
+
+*.png
+dajin_*.png
