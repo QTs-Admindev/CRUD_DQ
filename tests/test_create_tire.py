@@ -137,3 +137,24 @@ def test_missing_required_field_returns_422(wire):
     wire(FakeSmartTyre())
     resp = mod.handler({"body": json.dumps({"prefix": "TSM"})}, None)  # faltan campos
     assert resp["statusCode"] == 422
+
+
+def test_duplicate_folio_same_company_different_prefix_409(wire):
+    # Mismo folio + misma compañía + otro prefix -> rechazado (folio único por compañía).
+    st = FakeSmartTyre()
+    store, db = wire(st)
+    store.rows[1] = {"id": 1, "prefix": "AAA", "folio": "9001", "company_id": 100,
+                     "daijin_id": 1, "status": "new"}
+    resp = mod.handler(_event(prefix="BBB", folio="9001", company=100), None)
+    assert resp["statusCode"] == 409
+    assert st.posts == []
+
+
+def test_same_folio_different_company_is_allowed(wire):
+    # Mismo folio pero OTRA compañía -> sí se permite crear.
+    st = FakeSmartTyre(after=[{"id": 777}])
+    store, db = wire(st)
+    store.rows[1] = {"id": 1, "prefix": "AAA", "folio": "9001", "company_id": 100, "daijin_id": 1}
+    resp = mod.handler(_event(prefix="BBB", folio="9001", company=200), None)
+    assert resp["statusCode"] == 200
+    assert str(_body(resp)["daijin_id"]) == "777"

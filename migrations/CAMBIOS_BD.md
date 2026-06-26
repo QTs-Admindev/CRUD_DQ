@@ -19,6 +19,7 @@
 | 4 | Tabla `asset_audit_log` | (nueva) | — | ✅ ya creada en real |
 | 5 | Columna `is_deleted` (soft delete) | units, tires, sensors, tboxes | ⏳ por aplicar | ⏳ pendiente |
 | 6 | (Futuro) Retirar tablas `*_id_mapping` | mapping | — | ⏳ pendiente (al final) |
+| 7 | Folio único por compañía (regla en código) | tires | ✅ en código | ⏳ constraint DB opcional |
 
 ---
 
@@ -87,6 +88,24 @@ Solo cuando `Quinta2.0BEGQL` deje de usarlas (grep `_id_mapping` = 0). Renombrar
 ```sql
 -- RENAME TABLE unit_id_mapping TO _deprecated_unit_id_mapping;  -- etc.
 ```
+
+## Cambio 7 — Folio de llanta único por compañía
+
+Regla: el `folio` no se puede repetir dentro de la misma `company_id`, pero **sí** puede
+repetirse entre compañías distintas. Aplicado en el código (`functions/tires/create.py`):
+la llave de unicidad/idempotencia es `(folio, company_id)`; si llega un folio ya usado en
+la compañía con otro `prefix`, responde **409**.
+
+- **Opcional (defensa en BD):** cambiar el índice único de `tires`.
+  La tabla real hoy tiene `UNIQUE (prefix, folio, company_id)`. Para forzar la regla a nivel BD:
+  ```sql
+  -- 1) verificar que NO existan folios duplicados por compañía (con distinto prefix):
+  SELECT folio, company_id, COUNT(*) FROM tires GROUP BY folio, company_id HAVING COUNT(*) > 1;
+  -- 2) si está limpio:
+  ALTER TABLE tires DROP INDEX prefix;            -- el unique actual (prefix,folio,company_id)
+  ALTER TABLE tires ADD UNIQUE KEY uq_tires_folio_company (folio, company_id);
+  ```
+  ⚠️ Solo si el paso 1 devuelve 0 filas. Si hay duplicados, resolverlos antes.
 
 ---
 

@@ -40,11 +40,14 @@ def handler(event, context):
         return error(422, e.errors())
 
     db = get_db()
-    key = {"prefix": body.prefix, "folio": body.folio, "company_id": body.company_id}
+    # El folio debe ser único POR COMPAÑÍA (puede repetirse entre compañías distintas).
+    key = {"folio": body.folio, "company_id": body.company_id}
 
-    # 2. Local-first + idempotencia por (prefix, folio, company_id)
+    # 2. Local-first + idempotencia por (folio, company_id)
     try:
         existing = get_by_fields(db, t("tires"), key)
+        if existing and existing.get("prefix") != body.prefix:
+            return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
         if existing and existing.get("daijin_id"):
             return ok(existing)
         if existing:
@@ -74,6 +77,8 @@ def handler(event, context):
                 existing = get_by_fields(db, t("tires"), key)
                 if not existing:
                     raise
+                if existing.get("prefix") != body.prefix:
+                    return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
                 if existing.get("daijin_id"):
                     return ok(existing)
                 local_id = existing["id"]
