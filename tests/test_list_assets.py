@@ -34,3 +34,19 @@ def test_company_filter_parsed(monkeypatch):
     mod.handler({"pathParameters": {"resource": "tires"},
                  "queryStringParameters": {"company_id": "100"}}, None)
     assert seen["filters"] == {"is_deleted": 0, "company_id": 100}
+
+
+def test_admin_company_sees_all(monkeypatch):
+    seen = {}
+
+    def fake_get_many(db, table, cols, filters, limit=300):
+        seen["filters"] = filters
+        return []
+
+    monkeypatch.setattr(mod, "get_db", lambda: object())
+    monkeypatch.setattr(mod, "get_many", fake_get_many)
+
+    # company 2 is the admin -> no company filter (sees everything, incl. unassigned)
+    mod.handler({"pathParameters": {"resource": "sensors"},
+                 "queryStringParameters": {"company_id": "2"}}, None)
+    assert seen["filters"] == {"is_deleted": 0}
