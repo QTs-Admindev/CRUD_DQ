@@ -40,3 +40,24 @@ def pending(data) -> dict:
             default=str,
         ),
     }
+
+
+def pending_delete(data, reason=None) -> dict:
+    """Borrado local hecho, pero la limpieza en Dajin quedó pendiente (Dajin no respondió).
+
+    No es un error: el activo ya no aparece localmente (is_deleted=1) y el barrido de
+    reconciliación completará el borrado remoto cuando Dajin vuelva.
+    """
+    return {
+        "statusCode": 202,
+        "headers": _HEADERS,
+        "body": json.dumps(
+            {
+                "status": "deleting",
+                "data": data,
+                "message": "Borrado local hecho, limpieza en Dajin pendiente",
+                "reason": reason,
+            },
+            default=str,
+        ),
+    }

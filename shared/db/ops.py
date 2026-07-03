@@ -64,6 +64,18 @@ def soft_delete(db, table: str, record_id: int) -> dict | None:
     return get_by_id(db, table, record_id)
 
 
+def get_where(db, table: str, where_sql: str, params=(), limit: int = 200) -> list[dict]:
+    """Lista filas por una condición SQL libre (para la reconciliación).
+
+    where_sql es una condición con placeholders %s (ej. "status = %s" o
+    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC (procesar lo más viejo).
+    """
+    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id ASC LIMIT {int(limit)}"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, list(params))
+        return list(cur.fetchall())
+
+
 def get_by_fields(db, table: str, filters: dict) -> dict | None:
     """Busca por una llave compuesta (varios campos AND). Para natural keys como
     (prefix, folio, company_id) en tires o (unit_identifier, company_id, unit_catalog_id)."""

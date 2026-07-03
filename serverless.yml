@@ -97,6 +97,14 @@ functions:
           method: get
           cors: true
 
+  getStatus:
+    handler: functions/status/get_status.handler
+    events:
+      - http:
+          path: /status/{resource}/{id}
+          method: get
+          cors: true
+
   bindTbox:
     handler: functions/vehicles/bind_tbox.handler
     events:
@@ -200,6 +208,15 @@ functions:
           path: /tires/{id}/sensors/unbind
           method: post
           cors: true
+
+  # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
+  reconcile:
+    handler: functions/reconciliation/reconcile.handler
+    timeout: 120
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
 
 plugins:
   - serverless-python-requirements
