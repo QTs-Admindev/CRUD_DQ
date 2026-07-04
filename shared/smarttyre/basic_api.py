@@ -33,6 +33,12 @@ TRANSIENT = "transient"       # fallo transitorio (red/5xx/login): reintentable
 
 DEFAULT_BACKOFF = (0.5, 1.5, 3.0)
 
+# Códigos/mensajes de Dajin que significan "el activo ya no existe": el borrado es
+# idempotente, así que lo tratamos como ÉXITO (no como rechazo). Visto: al borrar un
+# vehículo ya borrado devuelve {"code":900,"msg":"不存在该车辆"} ("no existe").
+_ALREADY_GONE_CODES = {900}
+_ALREADY_GONE_MARK = "不存在"  # "no existe" (aparece en el msg de todos los recursos)
+
 
 class BasicApiGuard(Exception):
     """Dajin rechazó el borrado por una regla de negocio (ej. 'llanta con sensor').
@@ -116,13 +122,17 @@ class BasicApiClient:
             raise BasicApiTransient(f"delete {resource}/{daijin_id}: respuesta no-JSON")
 
         code = body.get("code")
+        msg = body.get("msg") or ""
         if code == 200:
             return True
         if code == 401:
             _reset_token()
             raise BasicApiTransient("token expirado (body code 401)")
+        # "ya no existe" (borrado previo) -> idempotente, lo tratamos como éxito.
+        if code in _ALREADY_GONE_CODES or _ALREADY_GONE_MARK in msg:
+            return True
         # cualquier otro código = rechazo de negocio (guard, ej. 531 llanta con sensor)
-        raise BasicApiGuard(code, body.get("msg"))
+        raise BasicApiGuard(code, msg)
 
 
 def attempt_delete(resource: str, daijin_id, backoff=DEFAULT_BACKOFF):

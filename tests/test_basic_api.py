@@ -157,10 +157,22 @@ def test_delete_non_json_response_is_transient(monkeypatch):
 
 
 def test_http_200_with_unknown_code_is_guard(monkeypatch):
-    # Cualquier code de negocio distinto de 200/401 se trata como rechazo permanente.
+    # Cualquier code de negocio distinto de 200/401/ya-borrado se trata como rechazo.
     _wire(monkeypatch, FakeHttpx(FakeResp(200, {"code": 500, "msg": "internal"})))
     status, msg = attempt_delete("vehicle", "1", backoff=())
     assert status == GUARD and msg == "internal"
+
+
+def test_code_900_already_gone_is_success(monkeypatch):
+    # Borrar algo ya borrado en Dajin -> {"code":900,"msg":"不存在该车辆"} = idempotente OK.
+    _wire(monkeypatch, FakeHttpx(FakeResp(200, {"code": 900, "msg": "不存在该车辆"})))
+    assert attempt_delete("vehicle", "1", backoff=()) == (DONE, None)
+
+
+def test_not_exist_message_is_success(monkeypatch):
+    # Aunque el code fuera otro, el mensaje "不存在" (no existe) también = éxito.
+    _wire(monkeypatch, FakeHttpx(FakeResp(200, {"code": 404, "msg": "不存在该传感器"})))
+    assert attempt_delete("sensor", "1", backoff=()) == (DONE, None)
 
 
 # ---------- reintentos ----------
