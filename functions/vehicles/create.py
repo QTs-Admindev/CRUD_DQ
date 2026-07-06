@@ -19,6 +19,7 @@ class CreateVehicleRequest(BaseModel):
     tbox_code: str | None = None
     vin: str = ""
     plates: str | None = None
+    mileage: int = 0
 
 
 def _dajin_type(catalog: dict) -> tuple[int, str]:
@@ -61,6 +62,7 @@ def handler(event, context):
                     "tbox_id": body.tbox_id,
                     "vin": body.vin,
                     "plates": body.plates,
+                    "mileage": body.mileage,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })

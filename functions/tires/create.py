@@ -30,6 +30,9 @@ class CreateTireRequest(BaseModel):
     mount_position: int | None = None
     axle_index: int | None = None
     wheel_index: int | None = None
+    cost: float | None = None
+    supplier_id: int | None = None
+    life_number: int | None = None
 
 
 def handler(event, context):
@@ -67,6 +70,10 @@ def handler(event, context):
                     "mount_position": body.mount_position,
                     "axle_index": body.axle_index,
                     "wheel_index": body.wheel_index,
+                    "cost": body.cost,
+                    "supplier_id": body.supplier_id,
+                    "life_number": body.life_number,
+                    "mounted_millage": 0,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })
