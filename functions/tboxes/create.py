@@ -13,8 +13,10 @@ from shared.utils.validators import validate_hex12
 
 
 class CreateTboxRequest(BaseModel):
-    # Tboxes are registered into inventory WITHOUT a company; assigned later.
     tbox_code: str
+    # company_id opcional: si viene, el tbox nace asignado a esa compañía;
+    # si es None, queda en inventario (sin compañía) como antes.
+    company_id: int | None = None
 
     @field_validator("tbox_code")
     @classmethod
@@ -42,6 +44,7 @@ def handler(event, context):
             try:
                 rec = insert(db, t("tboxes"), {
                     "tboxCode": body.tbox_code,
+                    "company_id": body.company_id,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })

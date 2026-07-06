@@ -16,8 +16,10 @@ SENSOR_VERSION = "404"
 
 
 class CreateSensorRequest(BaseModel):
-    # Sensors are registered into inventory WITHOUT a company; assigned later.
     sensor_code: str
+    # company_id opcional: si viene, el sensor nace asignado a esa compañía;
+    # si es None, queda en inventario (sin compañía) como antes.
+    company_id: int | None = None
 
     @field_validator("sensor_code")
     @classmethod
@@ -45,6 +47,7 @@ def handler(event, context):
             try:
                 rec = insert(db, t("sensors"), {
                     "sensorCode": body.sensor_code,
+                    "company_id": body.company_id,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })
