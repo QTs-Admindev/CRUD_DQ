@@ -216,7 +216,10 @@ functions:
     events:
       - schedule:
           rate: rate(5 minutes)
-          enabled: true
+          # CUTOVER 2026-07-06: desactivado temporalmente. Al pasar dev a tablas REALES
+          # hay ~137 filas viejas en status='registering' (120 sensors, 9 tires, 8 tboxes)
+          # que este barrido finalizaría en masa. Reactivar tras revisarlas manualmente.
+          enabled: false
 
 plugins:
   - serverless-python-requirements
