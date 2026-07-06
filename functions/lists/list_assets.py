@@ -13,7 +13,7 @@ MAX_LIMIT = 5000
 RESOURCES = {
     "units": {
         "columns": ("id, unit_identifier, company_id, daijin_id, status, tbox_id, "
-                    "unit_catalog_id, vin, plates, mileage, is_tractor, "
+                    "unit_catalog_id, vin, plates, mileage, "
                     "created_at, updated_at"),
         "prefixed": True, "soft": True, "by_company": True,
     },
@@ -21,7 +21,7 @@ RESOURCES = {
         "columns": ("id, prefix, folio, company_id, daijin_id, status, "
                     "unit_id, sensor_id, is_mounted, axle_index, wheel_index, "
                     "mount_position, tires_catalog_id, current_depth, tire_mileage, "
-                    "life_number, supplier, cost, created_at, updated_at"),
+                    "life_number, cost, created_at, updated_at"),
         "prefixed": True, "soft": True, "by_company": True,
     },
     "sensors": {
