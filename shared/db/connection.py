@@ -22,5 +22,10 @@ def get_db():
             db=url.path.lstrip("/"),
             charset="utf8mb4",
             autocommit=False,
+            # READ COMMITTED: cada SELECT ve el último commit. Sin esto, la conexión
+            # warm del Lambda mantiene un snapshot REPEATABLE READ congelado y /list
+            # devuelve datos viejos (no ve filas creadas por otras invocaciones
+            # después de su primer read).
+            init_command="SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
         )
     return _conn
