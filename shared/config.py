@@ -13,3 +13,8 @@ def t(name: str) -> str:
 
 # Admin/provider company: sees the whole inventory (including unassigned sensors/tboxes).
 ADMIN_COMPANY_ID = 2
+
+# orgId de Dajin: SIEMPRE la organización de Quinta (218). Dajin no conoce nuestros
+# company_id — toda la flota vive bajo el org de Quinta. NO usar company_id como orgId.
+# Configurable por env por si cambiara.
+DAJIN_ORG_ID = os.environ.get("DAJIN_ORG_ID", "218")

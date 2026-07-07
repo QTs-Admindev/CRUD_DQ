@@ -2,7 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
-from shared.config import t
+from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
 from shared.smarttyre.client import SmartTyreClient
@@ -52,7 +52,7 @@ def handler(event, context):
             "licensePlateNumber": str(unit_id),
             "axleTypeId": str(catalog.get("d_id") or ""),
             "modelId": model_id,
-            "orgId": str(unit.get("company_id")),
+            "orgId": DAJIN_ORG_ID,
             "tboxId": tbox["daijin_id"],
         })
     except Exception as e:
