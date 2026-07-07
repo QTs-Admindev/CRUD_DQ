@@ -100,8 +100,6 @@ def handler(event, context):
             "axleTypeId": str(catalog.get("d_id") or ""),
             "orgId": str(body.company_id),
         }
-        if body.tbox_code:
-            payload["tboxCode"] = body.tbox_code
         daijin_id = resolve_or_create(
             st,
             list_path="/smartyre/openapi/vehicle/list",
@@ -123,7 +121,30 @@ def handler(event, context):
             "updated_at": now_ms(),
         })
         db.commit()
-        return ok(rec)
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (activate unit, daijin_id={daijin_id}): {e}")
+
+    # 6. Si viene tbox, atarlo en DAJIN (vehicle/update con tboxId = daijin del tbox),
+    #    igual que el endpoint bind_tbox. El vínculo local (units.tbox_id) ya quedó en
+    #    el insert; esto lo refleja en Dajin. Best-effort: si falla, la unidad ya está
+    #    creada y el tbox se puede reasignar con /vehicles/{id}/tbox/bind.
+    if body.tbox_id:
+        try:
+            tbox = get_by_id(db, t("tboxes"), body.tbox_id)
+            if tbox and tbox.get("daijin_id"):
+                st.post("/smartyre/openapi/vehicle/update", {
+                    "id": daijin_id,
+                    "isTractor": is_tractor,
+                    "licensePlateNumber": str(local_id),
+                    "axleTypeId": str(catalog.get("d_id") or ""),
+                    "modelId": model_id,
+                    "orgId": str(body.company_id),
+                    "tboxId": tbox["daijin_id"],
+                })
+            else:
+                return ok({**rec, "tbox_bind_warning": "el tbox no tiene daijin_id"})
+        except Exception as e:
+            return ok({**rec, "tbox_bind_warning": f"bind en Dajin falló: {e}"})
+
+    return ok(rec)
