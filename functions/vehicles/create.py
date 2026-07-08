@@ -45,36 +45,51 @@ def handler(event, context):
         "company_id": body.company_id,
         "unit_catalog_id": body.unit_catalog_id,
     }
+    unit_fields = {
+        "tbox_id": body.tbox_id,
+        "vin": body.vin,
+        "plates": body.plates,
+        "mileage": body.mileage,
+    }
+    DUP_MSG = "Ya existe una unidad con ese identificador para esta compañía y tipo."
 
-    # 2. Local-first + idempotencia por (unit_identifier, company_id, unit_catalog_id)
+    # 2. Local-first. Regla de negocio: no se puede dar de alta 2 veces la misma
+    #    unidad (misma clave) salvo que la existente esté borrada (is_deleted=1);
+    #    en ese caso se re-activa esa misma fila en vez de duplicarla.
     try:
         existing = get_by_fields(db, t("units"), key)
-        if existing and existing.get("daijin_id"):
-            return ok(existing)
-        if existing:
+        if existing and not existing.get("is_deleted"):
+            if existing.get("daijin_id"):
+                return error(409, DUP_MSG)  # alta ya completada -> duplicado
+            local_id = existing["id"]        # alta a medias (registering) -> reanudar
+        elif existing:                       # existe pero borrada -> re-alta sobre la misma fila
+            update(db, t("units"), existing["id"], {
+                **unit_fields, "is_deleted": 0, "daijin_id": None,
+                "status": "registering", "updated_at": now_ms(),
+            })
+            db.commit()
             local_id = existing["id"]
         else:
             try:
                 rec = insert(db, t("units"), {
-                    "unit_identifier": body.unit_identifier,
-                    "company_id": body.company_id,
-                    "unit_catalog_id": body.unit_catalog_id,
-                    "tbox_id": body.tbox_id,
-                    "vin": body.vin,
-                    "plates": body.plates,
-                    "mileage": body.mileage,
-                    "status": "registering",
-                    "updated_at": now_ms(),
+                    **key, **unit_fields, "status": "registering", "updated_at": now_ms(),
                 })
                 db.commit()
                 local_id = rec["id"]
             except Exception:
+                # Carrera / clave duplicada: otro proceso la creó -> reevaluar la regla.
                 db.rollback()
                 existing = get_by_fields(db, t("units"), key)
                 if not existing:
                     raise
-                if existing.get("daijin_id"):
-                    return ok(existing)
+                if not existing.get("is_deleted") and existing.get("daijin_id"):
+                    return error(409, DUP_MSG)
+                if existing.get("is_deleted"):
+                    update(db, t("units"), existing["id"], {
+                        **unit_fields, "is_deleted": 0, "daijin_id": None,
+                        "status": "registering", "updated_at": now_ms(),
+                    })
+                    db.commit()
                 local_id = existing["id"]
     except Exception as e:
         db.rollback()
