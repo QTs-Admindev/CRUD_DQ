@@ -177,6 +177,14 @@ functions:
           method: put
           cors: true
 
+  updateSensor:
+    handler: functions/sensors/update.handler
+    events:
+      - http:
+          path: /sensors/{id}
+          method: put
+          cors: true
+
   bindTireToVehicle:
     handler: functions/bindings/bind_tire.handler
     events:
