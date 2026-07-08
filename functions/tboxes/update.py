@@ -2,8 +2,10 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
 VALID_STATUSES = {"registering", "active", "inactive"}
@@ -11,7 +13,7 @@ VALID_STATUSES = {"registering", "active", "inactive"}
 
 class UpdateTboxRequest(BaseModel):
     status: str | None = None
-    vehicle_id: int | None = None
+    company_id: int | None = None
 
 
 def handler(event, context):
@@ -29,16 +31,17 @@ def handler(event, context):
         return error(422, f"status debe ser uno de: {', '.join(VALID_STATUSES)}")
 
     db = get_db()
-    tbox = get_by_id(db, "tboxes", tbox_id)
+    tbox = get_by_id(db, t("tboxes"), tbox_id)
     if not tbox:
         return error(404, "TBox no encontrado")
 
     mysql_payload = {k: v for k, v in body.model_dump().items() if v is not None}
     if not mysql_payload:
         return ok(tbox)
+    mysql_payload["updated_at"] = now_ms()
 
     try:
-        record = update(db, "tboxes", tbox_id, mysql_payload)
+        record = update(db, t("tboxes"), tbox_id, mysql_payload)
         db.commit()
         return ok(record)
     except Exception as e:
