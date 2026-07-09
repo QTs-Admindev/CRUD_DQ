@@ -35,7 +35,7 @@ def pending(data) -> dict:
             {
                 "status": "registering",
                 "data": data,
-                "message": "Activo creado, sincronización con Dajin pendiente",
+                "message": "Creado (en proceso)",
             },
             default=str,
         ),
@@ -55,7 +55,7 @@ def pending_delete(data, reason=None) -> dict:
             {
                 "status": "deleting",
                 "data": data,
-                "message": "Borrado local hecho, limpieza en Dajin pendiente",
+                "message": "Borrado en proceso",
                 "reason": reason,
             },
             default=str,

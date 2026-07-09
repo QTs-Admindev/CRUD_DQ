@@ -36,7 +36,7 @@ def handler(event, context):
             "sensorCode": sensor.get("sensorCode") if sensor else None,
         })
     except Exception as e:
-        return error(502, f"Dajin error (unbind sensor): {e}")
+        return error(502, "No se pudo desvincular el sensor, intenta de nuevo")
 
     try:
         rec = update(db, t("tires"), tire_id, {

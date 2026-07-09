@@ -31,12 +31,12 @@ def handler(event, context):
     if not unit:
         return error(404, "Vehículo no encontrado")
     if not unit.get("daijin_id"):
-        return error(409, "El vehículo aún no está sincronizado con Dajin")
+        return error(409, "El vehículo aún no está listo")
     tbox = get_by_id(db, t("tboxes"), body.tbox_id)
     if not tbox:
-        return error(404, "Tbox no encontrado")
+        return error(404, "Qbox no encontrado")
     if not tbox.get("daijin_id"):
-        return error(409, "El tbox aún no está sincronizado con Dajin")
+        return error(409, "El Qbox aún no está listo")
     catalog = get_by_id(db, "unit_catalog", unit.get("unit_catalog_id"))
     if not catalog:
         return error(422, "unit_catalog del vehículo no encontrado")
@@ -56,7 +56,7 @@ def handler(event, context):
             "tboxId": tbox["daijin_id"],
         })
     except Exception as e:
-        return error(502, f"Dajin error (asignar tbox): {e}")
+        return error(502, "No se pudo asignar el Qbox, intenta de nuevo")
 
     try:
         rec = update(db, t("units"), unit_id, {"tbox_id": body.tbox_id, "updated_at": now_ms()})

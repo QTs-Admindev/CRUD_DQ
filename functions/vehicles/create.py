@@ -23,7 +23,7 @@ class CreateVehicleRequest(BaseModel):
 
 
 def _dajin_type(catalog: dict) -> tuple[int, str]:
-    """Calcula (isTractor, modelId) para Dajin a partir del unit_catalog (igual que el v1)."""
+    """Compute (isTractor, modelId) for the platform from the unit_catalog (same as v1)."""
     name = (catalog.get("name") or "").lower()
     if catalog.get("type") == "trailer":
         return 2, "39"
@@ -158,8 +158,8 @@ def handler(event, context):
                     "tboxId": tbox["daijin_id"],
                 })
             else:
-                return ok({**rec, "tbox_bind_warning": "el tbox no tiene daijin_id"})
-        except Exception as e:
-            return ok({**rec, "tbox_bind_warning": f"bind en Dajin falló: {e}"})
+                return ok({**rec, "tbox_bind_warning": "el Qbox aún no está listo"})
+        except Exception:
+            return ok({**rec, "tbox_bind_warning": "no se pudo vincular el Qbox"})
 
     return ok(rec)

@@ -37,10 +37,10 @@ def handler(event, context):
     if not tire.get("unit_id"):
         return error(409, "La llanta no está montada en un vehículo")
     if not tire.get("daijin_id"):
-        return error(409, "La llanta aún no está sincronizada con la plataforma")
+        return error(409, "La llanta aún no está lista")
     unit = get_by_id(db, t("units"), tire["unit_id"])
     if not unit or not unit.get("daijin_id"):
-        return error(409, "El vehículo de la llanta no está sincronizado con la plataforma")
+        return error(409, "El vehículo de la llanta aún no está listo")
     sensor = get_by_id(db, t("sensors"), body.sensor_id)
     if not sensor:
         return error(404, "Sensor no encontrado")
@@ -58,7 +58,7 @@ def handler(event, context):
             "vehicleId": unit["daijin_id"],
         })
     except Exception as e:
-        return error(502, f"Error de la plataforma (bind sensor): {e}")
+        return error(502, "No se pudo completar la vinculación del sensor, intenta de nuevo")
 
     # Local: la relación sensor<->llanta vive en tires.sensor_id.
     try:

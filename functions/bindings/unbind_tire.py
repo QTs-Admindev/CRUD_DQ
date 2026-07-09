@@ -42,7 +42,7 @@ def handler(event, context):
             "tyreCode": str(body.tire_id),
         })
     except Exception as e:
-        return error(502, f"Dajin error (unbind tire): {e}")
+        return error(502, "No se pudo desmontar la llanta, intenta de nuevo")
 
     try:
         rec = update(db, t("tires"), body.tire_id, {

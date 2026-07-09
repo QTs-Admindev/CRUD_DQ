@@ -28,7 +28,7 @@ def handler(event, context):
     if daijin_id:
         status, msg = attempt_delete("sensor", str(daijin_id))
         if status == GUARD:
-            return error(409, f"Dajin rechazó el borrado: {msg}")
+            return error(409, "No se pudo completar el borrado")
     else:
         status, msg = DONE, None
 

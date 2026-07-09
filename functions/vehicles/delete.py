@@ -44,7 +44,7 @@ def handler(event, context):
                     "tboxId": "",
                 })
             except Exception as e:
-                return error(502, f"Error al desvincular el Qbox: {e}")
+                return error(502, "No se pudo desvincular el Qbox, intenta de nuevo")
         try:
             rec = update(db, t("units"), rid, {"tbox_id": None, "updated_at": now_ms()})
             db.commit()
@@ -57,7 +57,7 @@ def handler(event, context):
     if daijin_id:
         status, msg = attempt_delete("vehicle", str(daijin_id))
         if status == GUARD:
-            return error(409, f"La plataforma rechazó el borrado: {msg}")
+            return error(409, "No se pudo completar el borrado")
     else:
         status, msg = DONE, None  # nunca sincronizó -> nada remoto que borrar
 
