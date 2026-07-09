@@ -33,12 +33,14 @@ def handler(event, context):
         return error(404, "Llanta no encontrada")
     if tire.get("sensor_id"):
         return error(409, "La llanta ya tiene un sensor vinculado")
-    # El bind sensor->llanta requiere el vehículo de la llanta (vehicleId en Dajin).
+    # Binding sensor->tire needs the tire's vehicle (vehicleId in the platform).
     if not tire.get("unit_id"):
         return error(409, "La llanta no está montada en un vehículo")
+    if not tire.get("daijin_id"):
+        return error(409, "La llanta aún no está sincronizada con la plataforma")
     unit = get_by_id(db, t("units"), tire["unit_id"])
     if not unit or not unit.get("daijin_id"):
-        return error(409, "El vehículo de la llanta no está sincronizado con Dajin")
+        return error(409, "El vehículo de la llanta no está sincronizado con la plataforma")
     sensor = get_by_id(db, t("sensors"), body.sensor_id)
     if not sensor:
         return error(404, "Sensor no encontrado")
@@ -56,7 +58,7 @@ def handler(event, context):
             "vehicleId": unit["daijin_id"],
         })
     except Exception as e:
-        return error(502, f"Dajin error (bind sensor): {e}")
+        return error(502, f"Error de la plataforma (bind sensor): {e}")
 
     # Local: la relación sensor<->llanta vive en tires.sensor_id.
     try:

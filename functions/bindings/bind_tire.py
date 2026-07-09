@@ -33,14 +33,16 @@ def handler(event, context):
     if not unit:
         return error(404, "Vehículo no encontrado")
     if not unit.get("daijin_id"):
-        return error(409, "El vehículo aún no está sincronizado con Dajin")
+        return error(409, "El vehículo aún no está sincronizado con la plataforma")
     tire = get_by_id(db, t("tires"), body.tire_id)
     if not tire:
         return error(404, "Llanta no encontrada")
     if tire.get("is_mounted"):
         return error(409, "La llanta ya está montada")
+    if not tire.get("daijin_id"):
+        return error(409, "La llanta aún no está sincronizada con la plataforma")
 
-    # Dajin primero: vehicleId = daijin de la unidad, tyreCode = id local de la llanta.
+    # Platform first: vehicleId = unit's daijin_id, tyreCode = local tire id.
     try:
         st = SmartTyreClient()
         st.post("/smartyre/openapi/vehicle/tyre/bind", {
@@ -50,7 +52,7 @@ def handler(event, context):
             "wheelIndex": body.wheel_index,
         })
     except Exception as e:
-        return error(502, f"Dajin error (bind tire): {e}")
+        return error(502, f"Error de la plataforma (bind tire): {e}")
 
     # Local: reflejar la relación llanta -> unidad.
     try:

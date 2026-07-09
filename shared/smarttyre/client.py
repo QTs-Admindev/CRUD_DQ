@@ -16,6 +16,27 @@ _VERIFY_SSL = False
 _TIMEOUT = 20
 
 
+class SmartTyreError(Exception):
+    """Business-level rejection from Dajin (HTTP 200 but code != 200).
+
+    Dajin wraps every response in {"code": 200, "msg": "Success", "data": ...}.
+    A non-200 code means the operation was refused even though the HTTP call
+    succeeded (e.g. an invalid bind, or an asset that does not exist upstream).
+    Without this, such failures were silently swallowed and only the local DB
+    was written.
+    """
+
+
+def _unwrap(resp, path: str):
+    """Return the payload's `data`, raising SmartTyreError on a business error."""
+    payload = resp.json()
+    code = payload.get("code")
+    if code is not None and code != 200:
+        msg = payload.get("msg") or payload.get("message") or "sin mensaje"
+        raise SmartTyreError(f"{path} -> code {code}: {msg}")
+    return payload.get("data")
+
+
 class SmartTyreClient:
     def __init__(self):
         creds = get_secret_json("DCredentials")
@@ -70,7 +91,8 @@ class SmartTyreClient:
         return _token
 
     def post(self, path: str, data: dict):
-        # Dajin envuelve la respuesta en {"data": ..., "msg": ...}; devolvemos .data.
+        # Dajin wraps the response in {"code":200,"msg":"Success","data":...}.
+        # _unwrap validates the business code (not just HTTP) and returns .data.
         body_str = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
         headers = self._headers(body_str=body_str)
         resp = httpx.post(
@@ -78,7 +100,7 @@ class SmartTyreClient:
             verify=_VERIFY_SSL, timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        return resp.json().get("data")
+        return _unwrap(resp, path)
 
     def get(self, path: str, params: dict | None = None):
         headers = self._headers(params=params)
@@ -87,4 +109,4 @@ class SmartTyreClient:
             verify=_VERIFY_SSL, timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        return resp.json().get("data")
+        return _unwrap(resp, path)
