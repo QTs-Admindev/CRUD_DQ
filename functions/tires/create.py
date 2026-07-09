@@ -4,7 +4,7 @@ from pydantic import BaseModel, ValidationError
 
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_fields, get_by_id, insert, update
+from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -45,10 +45,14 @@ def handler(event, context):
     db = get_db()
     # El folio debe ser único POR COMPAÑÍA (puede repetirse entre compañías distintas).
     key = {"folio": body.folio, "company_id": body.company_id}
+    # LIVE = not soft-deleted; a deleted row is never reused nor matched.
+    live_sql = "folio = %s AND company_id = %s AND (is_deleted IS NULL OR is_deleted = 0)"
+    live_vals = [body.folio, body.company_id]
 
-    # 2. Local-first + idempotencia por (folio, company_id)
+    # 2. Local-first + idempotency by (folio, company_id), LIVE rows only.
     try:
-        existing = get_by_fields(db, t("tires"), key)
+        rows = get_where(db, t("tires"), live_sql, live_vals, 1)
+        existing = rows[0] if rows else None
         if existing and existing.get("prefix") != body.prefix:
             return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
         if existing and existing.get("daijin_id"):
@@ -81,7 +85,12 @@ def handler(event, context):
                 local_id = rec["id"]
             except Exception:
                 db.rollback()
-                existing = get_by_fields(db, t("tires"), key)
+                # If a soft-deleted row holds this (folio, company_id), never reuse it.
+                dead = get_by_fields(db, t("tires"), key)
+                if dead and dead.get("is_deleted"):
+                    return error(409, "Ese folio pertenece a un registro borrado y no puede reutilizarse")
+                rows = get_where(db, t("tires"), live_sql, live_vals, 1)
+                existing = rows[0] if rows else None
                 if not existing:
                     raise
                 if existing.get("prefix") != body.prefix:

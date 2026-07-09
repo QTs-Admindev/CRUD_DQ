@@ -4,7 +4,7 @@ from pydantic import BaseModel, ValidationError
 
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_fields, get_by_id, insert, update
+from shared.db.ops import get_by_id, get_where, insert, update
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -40,11 +40,13 @@ def handler(event, context):
         return error(422, e.errors())
 
     db = get_db()
-    key = {
-        "unit_identifier": body.unit_identifier,
-        "company_id": body.company_id,
-        "unit_catalog_id": body.unit_catalog_id,
-    }
+    # LIVE = not soft-deleted. Old rows may have is_deleted NULL (never deleted),
+    # so "live" means NOT is_deleted=1 (NULL counts as live).
+    live_sql = (
+        "unit_identifier = %s AND company_id = %s AND unit_catalog_id = %s "
+        "AND (is_deleted IS NULL OR is_deleted = 0)"
+    )
+    key_vals = [body.unit_identifier, body.company_id, body.unit_catalog_id]
     unit_fields = {
         "tbox_id": body.tbox_id,
         "vin": body.vin,
@@ -53,43 +55,37 @@ def handler(event, context):
     }
     DUP_MSG = "Ya existe una unidad con ese identificador para esta compañía y tipo."
 
-    # 2. Local-first. Regla de negocio: no se puede dar de alta 2 veces la misma
-    #    unidad (misma clave) salvo que la existente esté borrada (is_deleted=1);
-    #    en ese caso se re-activa esa misma fila en vez de duplicarla.
+    def _live_unit():
+        rows = get_where(db, t("units"), live_sql, key_vals, 1)
+        return rows[0] if rows else None
+
+    # 2. Local-first. Business rule: a soft-deleted row is NEVER reused nor matched.
+    #    Duplicates are checked only against LIVE rows; a re-alta inserts a fresh row
+    #    (a previously deleted unit with the same key is ignored entirely).
     try:
-        existing = get_by_fields(db, t("units"), key)
-        if existing and not existing.get("is_deleted"):
+        existing = _live_unit()
+        if existing:
             if existing.get("daijin_id"):
-                return error(409, DUP_MSG)  # alta ya completada -> duplicado
-            local_id = existing["id"]        # alta a medias (registering) -> reanudar
-        elif existing:                       # existe pero borrada -> re-alta sobre la misma fila
-            update(db, t("units"), existing["id"], {
-                **unit_fields, "is_deleted": 0, "daijin_id": None,
-                "status": "registering", "updated_at": now_ms(),
-            })
-            db.commit()
-            local_id = existing["id"]
+                return error(409, DUP_MSG)   # completed alta -> duplicate
+            local_id = existing["id"]         # half-done (registering) -> resume
         else:
             try:
                 rec = insert(db, t("units"), {
-                    **key, **unit_fields, "status": "registering", "updated_at": now_ms(),
+                    "unit_identifier": body.unit_identifier,
+                    "company_id": body.company_id,
+                    "unit_catalog_id": body.unit_catalog_id,
+                    **unit_fields, "status": "registering", "updated_at": now_ms(),
                 })
                 db.commit()
                 local_id = rec["id"]
             except Exception:
-                # Carrera / clave duplicada: otro proceso la creó -> reevaluar la regla.
+                # Race with a concurrent create of the SAME live row.
                 db.rollback()
-                existing = get_by_fields(db, t("units"), key)
+                existing = _live_unit()
                 if not existing:
                     raise
-                if not existing.get("is_deleted") and existing.get("daijin_id"):
+                if existing.get("daijin_id"):
                     return error(409, DUP_MSG)
-                if existing.get("is_deleted"):
-                    update(db, t("units"), existing["id"], {
-                        **unit_fields, "is_deleted": 0, "daijin_id": None,
-                        "status": "registering", "updated_at": now_ms(),
-                    })
-                    db.commit()
                 local_id = existing["id"]
     except Exception as e:
         db.rollback()

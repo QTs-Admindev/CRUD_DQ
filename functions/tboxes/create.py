@@ -4,7 +4,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_field, get_by_id, insert, update
+from shared.db.ops import get_by_field, get_by_id, get_where, insert, update
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -33,9 +33,13 @@ def handler(event, context):
 
     db = get_db()
 
-    # 2. Local-first with idempotency: insert `registering` (or resume if it exists).
+    # 2. Local-first with idempotency: insert `registering` (or resume a LIVE one).
+    #    A soft-deleted row (is_deleted=1) is NEVER reused nor matched. tboxCode is
+    #    UNIQUE, so re-creating a deleted code is refused instead of reactivating it.
+    live_sql = "tboxCode = %s AND (is_deleted IS NULL OR is_deleted = 0)"
     try:
-        existing = get_by_field(db, t("tboxes"), "tboxCode", body.tbox_code)
+        rows = get_where(db, t("tboxes"), live_sql, [body.tbox_code], 1)
+        existing = rows[0] if rows else None
         if existing and existing.get("daijin_id"):
             return ok(existing)
         if existing:
@@ -51,9 +55,13 @@ def handler(event, context):
                 db.commit()
                 local_id = rec["id"]
             except Exception:
-                # Race / duplicate key: another process created it -> resume.
                 db.rollback()
-                existing = get_by_field(db, t("tboxes"), "tboxCode", body.tbox_code)
+                # UNIQUE(tboxCode): if a soft-deleted row holds it, never reuse it.
+                dead = get_by_field(db, t("tboxes"), "tboxCode", body.tbox_code)
+                if dead and dead.get("is_deleted"):
+                    return error(409, "Ese código pertenece a un registro borrado y no puede reutilizarse")
+                rows = get_where(db, t("tboxes"), live_sql, [body.tbox_code], 1)
+                existing = rows[0] if rows else None
                 if not existing:
                     raise
                 if existing.get("daijin_id"):
