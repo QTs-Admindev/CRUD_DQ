@@ -23,8 +23,15 @@ _token_expires_at: float = 0.0
 _login_lock = threading.Lock()
 
 _VERIFY_SSL = False           # dajintruck.com tiene el SSL roto (igual que client.py)
-_TIMEOUT = 20
+# Timeouts acotados: un connect corto hace que un portal inalcanzable falle rápido
+# (antes 20s colgaban el connect). El path síncrono debe volver muy por debajo del
+# límite del API Gateway (~29s) para no reventar en el navegador con ERR_FAILED.
+_TIMEOUT = httpx.Timeout(connect=4.0, read=8.0, write=4.0, pool=4.0)
 _TOKEN_TTL = 23 * 3600        # el JWT dura ~24h; refrescamos con margen
+
+# Una vez consumidos estos segundos, no se inicia un reintento más (se deja pending y
+# la reconciliación lo retoma). Mantiene el Lambda síncrono bajo el límite del gateway.
+_STOP_RETRIES_AFTER = 6.0
 
 # Resultados de un intento de borrado remoto.
 DONE = "done"                 # Dajin confirmó el borrado
@@ -149,7 +156,12 @@ def attempt_delete(resource: str, daijin_id, backoff=DEFAULT_BACKOFF):
         return (TRANSIENT, f"basic-api no disponible: {e}")
 
     last = ""
+    start = time.monotonic()
     for i in range(len(backoff) + 1):
+        # Don't start another attempt once the budget is spent: leave it pending
+        # (reconciliation retries) instead of blowing the API Gateway timeout.
+        if i > 0 and time.monotonic() - start >= _STOP_RETRIES_AFTER:
+            break
         try:
             client.delete(resource, daijin_id)
             return (DONE, None)
