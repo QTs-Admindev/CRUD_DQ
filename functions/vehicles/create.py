@@ -79,14 +79,39 @@ def handler(event, context):
                 db.commit()
                 local_id = rec["id"]
             except Exception:
-                # Race with a concurrent create of the SAME live row.
                 db.rollback()
-                existing = _live_unit()
-                if not existing:
-                    raise
-                if existing.get("daijin_id"):
-                    return error(409, DUP_MSG)
-                local_id = existing["id"]
+                # units has a UNIQUE on (unit_identifier, company_id, unit_catalog_id).
+                # A soft-deleted row may hold it: don't reuse that dead row (it stays
+                # deleted, as history), but free its key so the unit can be re-created,
+                # then insert a fresh row.
+                dead_sql = (
+                    "unit_identifier = %s AND company_id = %s AND unit_catalog_id = %s "
+                    "AND is_deleted = 1"
+                )
+                dead_rows = get_where(db, t("units"), dead_sql, key_vals, 1)
+                dead = dead_rows[0] if dead_rows else None
+                if dead:
+                    update(db, t("units"), dead["id"], {
+                        "unit_identifier": f"{body.unit_identifier}__del{dead['id']}",
+                        "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    rec = insert(db, t("units"), {
+                        "unit_identifier": body.unit_identifier,
+                        "company_id": body.company_id,
+                        "unit_catalog_id": body.unit_catalog_id,
+                        **unit_fields, "status": "registering", "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    local_id = rec["id"]
+                else:
+                    # Race with a concurrent LIVE create of the SAME row.
+                    existing = _live_unit()
+                    if not existing:
+                        raise
+                    if existing.get("daijin_id"):
+                        return error(409, DUP_MSG)
+                    local_id = existing["id"]
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (insert unit): {e}")
