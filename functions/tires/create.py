@@ -84,11 +84,10 @@ def handler(event, context):
                 db.commit()
                 local_id = rec["id"]
             except Exception:
+                # No UNIQUE on (folio, company_id): a deleted row does not block a fresh
+                # insert, so a re-alta after delete just creates a new row. This branch
+                # only handles a race with a concurrent LIVE create.
                 db.rollback()
-                # If a soft-deleted row holds this (folio, company_id), never reuse it.
-                dead = get_by_fields(db, t("tires"), key)
-                if dead and dead.get("is_deleted"):
-                    return error(409, "Ese folio pertenece a un registro borrado y no puede reutilizarse")
                 rows = get_where(db, t("tires"), live_sql, live_vals, 1)
                 existing = rows[0] if rows else None
                 if not existing:

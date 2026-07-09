@@ -59,17 +59,33 @@ def handler(event, context):
                 local_id = rec["id"]
             except Exception:
                 db.rollback()
-                # UNIQUE(sensorCode): if a soft-deleted row holds it, never reuse it.
+                # UNIQUE(sensorCode): a soft-deleted row may hold this code. Don't reuse
+                # that dead row (it stays deleted, as history), but free its code so the
+                # sensor can be created anew, then insert a fresh row.
                 dead = get_by_field(db, t("sensors"), "sensorCode", body.sensor_code)
                 if dead and dead.get("is_deleted"):
-                    return error(409, "Ese código pertenece a un registro borrado y no puede reutilizarse")
-                rows = get_where(db, t("sensors"), live_sql, [body.sensor_code], 1)
-                existing = rows[0] if rows else None
-                if not existing:
-                    raise
-                if existing.get("daijin_id"):
-                    return ok(existing)
-                local_id = existing["id"]
+                    update(db, t("sensors"), dead["id"], {
+                        "sensorCode": f"{body.sensor_code}__del{dead['id']}",
+                        "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    rec = insert(db, t("sensors"), {
+                        "sensorCode": body.sensor_code,
+                        "company_id": body.company_id,
+                        "status": "registering",
+                        "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    local_id = rec["id"]
+                else:
+                    # Race with a concurrent LIVE create -> resume it.
+                    rows = get_where(db, t("sensors"), live_sql, [body.sensor_code], 1)
+                    existing = rows[0] if rows else None
+                    if not existing:
+                        raise
+                    if existing.get("daijin_id"):
+                        return ok(existing)
+                    local_id = existing["id"]
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (insert sensor): {e}")
