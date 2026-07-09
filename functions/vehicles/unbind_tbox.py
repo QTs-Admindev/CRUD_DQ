@@ -40,7 +40,7 @@ def handler(event, context):
             "axleTypeId": str(catalog.get("d_id") or ""),
             "modelId": model_id,
             "orgId": DAJIN_ORG_ID,
-            "tboxId": "",
+            "tboxCode": "",
         })
     except Exception as e:
         return error(502, "No se pudo quitar el Qbox, intenta de nuevo")

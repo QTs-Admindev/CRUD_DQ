@@ -155,7 +155,7 @@ def handler(event, context):
                     "axleTypeId": str(catalog.get("d_id") or ""),
                     "modelId": model_id,
                     "orgId": DAJIN_ORG_ID,  # Dajin siempre espera el org de Quinta (218), no el company_id
-                    "tboxId": tbox["daijin_id"],
+                    "tboxCode": tbox["tboxCode"],
                 })
             else:
                 return ok({**rec, "tbox_bind_warning": "el Qbox aún no está listo"})
