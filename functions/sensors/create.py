@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_field, get_by_id, get_where, insert, update
@@ -101,8 +102,12 @@ def handler(event, context):
             insert_payload={"sensorCode": body.sensor_code, "version": SENSOR_VERSION},
         )
     except SmartTyreNotResolved:
+        audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
+              natural_key=body.sensor_code, company_id=body.company_id, result="pending")
         return pending(get_by_id(db, t("sensors"), local_id))
     except Exception as e:
+        audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
+              natural_key=body.sensor_code, company_id=body.company_id, result="pending", error=str(e))
         return pending({"id": local_id, "sensorCode": body.sensor_code, "reason": str(e)})
 
     # 4. Confirm the match and activate.
@@ -113,6 +118,9 @@ def handler(event, context):
             "updated_at": now_ms(),
         })
         db.commit()
+        audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
+              natural_key=body.sensor_code, company_id=body.company_id,
+              daijin_id=daijin_id, result="success")
         return ok(rec)
     except Exception as e:
         db.rollback()

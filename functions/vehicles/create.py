@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, insert, update
@@ -145,8 +146,13 @@ def handler(event, context):
             assume_new=True,
         )
     except SmartTyreNotResolved:
+        audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
+              natural_key=body.unit_identifier, company_id=body.company_id, result="pending")
         return pending(get_by_id(db, t("units"), local_id))
     except Exception as e:
+        audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
+              natural_key=body.unit_identifier, company_id=body.company_id,
+              result="pending", error=str(e))
         return pending({"id": local_id, "unit_identifier": body.unit_identifier, "reason": str(e)})
 
     # 5. Activar.
@@ -157,6 +163,9 @@ def handler(event, context):
             "updated_at": now_ms(),
         })
         db.commit()
+        audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
+              natural_key=body.unit_identifier, company_id=body.company_id,
+              daijin_id=daijin_id, result="success")
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (activate unit, daijin_id={daijin_id}): {e}")
