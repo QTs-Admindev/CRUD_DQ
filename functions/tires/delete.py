@@ -1,3 +1,4 @@
+from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, soft_delete, update
@@ -83,11 +84,17 @@ def handler(event, context):
         if status == TRANSIENT:
             rec = soft_delete(db, t("tires"), rid)
             db.commit()
+            audit(db, event, context, action="update", asset_type="tire", asset_id=rid,
+                  natural_key=rec.get("folio"), company_id=rec.get("company_id"),
+                  daijin_id=daijin_id, result="pending", changes={"is_deleted": 1}, error=msg)
             return pending_delete(rec, msg)
         rec = update(db, t("tires"), rid, {
             "is_deleted": 1, "daijin_id": None, "updated_at": now_ms(),
         })
         db.commit()
+        audit(db, event, context, action="update", asset_type="tire", asset_id=rid,
+              natural_key=rec.get("folio"), company_id=rec.get("company_id"),
+              daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
         return ok(rec)
     except Exception as e:
         db.rollback()

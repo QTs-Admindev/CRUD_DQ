@@ -1,3 +1,4 @@
+from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, soft_delete, update
@@ -90,12 +91,18 @@ def handler(event, context):
             # (conserva daijin_id -> la reconciliación lo retoma).
             rec = soft_delete(db, t("units"), rid)
             db.commit()
+            audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
+                  natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
+                  daijin_id=daijin_id, result="pending", changes={"is_deleted": 1}, error=msg)
             return pending_delete(rec, msg)
         # DONE (o sin daijin_id): soft-delete + limpiar daijin_id (marca cerrado).
         rec = update(db, t("units"), rid, {
             "is_deleted": 1, "daijin_id": None, "updated_at": now_ms(),
         })
         db.commit()
+        audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
+              natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
+              daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
         return ok(rec)
     except Exception as e:
         db.rollback()
