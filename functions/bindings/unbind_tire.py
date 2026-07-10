@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
@@ -54,6 +55,9 @@ def handler(event, context):
             "updated_at": now_ms(),
         })
         db.commit()
+        audit(db, event, context, action="unbind", asset_type="tire", asset_id=body.tire_id,
+              natural_key=tire.get("folio"), company_id=tire.get("company_id"),
+              daijin_id=tire.get("daijin_id"), result="success", changes={"unit_id": None})
         return ok(rec)
     except Exception as e:
         db.rollback()

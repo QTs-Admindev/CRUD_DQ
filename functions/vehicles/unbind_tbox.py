@@ -1,5 +1,6 @@
 import json
 
+from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
@@ -48,6 +49,9 @@ def handler(event, context):
     try:
         rec = update(db, t("units"), unit_id, {"tbox_id": None, "updated_at": now_ms()})
         db.commit()
+        audit(db, event, context, action="unbind", asset_type="tbox",
+              asset_id=unit.get("tbox_id"), company_id=unit.get("company_id"),
+              result="success", changes={"unit_id": None})
         return ok(rec)
     except Exception as e:
         db.rollback()
