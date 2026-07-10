@@ -45,6 +45,14 @@ RESOURCES = {
         "columns": "id, company_name, finance_name",
         "prefixed": False, "soft": False, "by_company": False,
     },
+    # Bitácora de auditoría (tabla real, solo lectura). Filtrable por actor/action/
+    # asset_type/asset_id/result/company_id vía los filtros opcionales de abajo.
+    "asset_audit_log": {
+        "columns": ("id, request_id, actor, action, asset_type, asset_id, "
+                    "natural_key, company_id, daijin_id, result, payload, "
+                    "changes, error, created_at"),
+        "prefixed": False, "soft": False, "by_company": True,
+    },
 }
 
 
@@ -74,6 +82,17 @@ def handler(event, context):
             limit = max(1, min(int(qs["limit"]), MAX_LIMIT))
         except ValueError:
             return error(422, "limit must be an integer")
+
+    # Extra optional filters (backward compatible): any output column can be matched
+    # exactly via a query param, e.g. ?status=new&is_mounted=1&actor=foo@bar.com.
+    # No such params => same behavior as before. company_id/limit keep their special
+    # handling and the soft-delete filter can't be overridden.
+    filterable = {c.strip() for c in cfg["columns"].replace("\n", " ").split(",")}
+    reserved = {"company_id", "limit", "is_deleted", "created_at", "updated_at"}
+    for k, v in qs.items():
+        if k in reserved or k not in filterable or v in (None, ""):
+            continue
+        filters[k] = v
 
     table = t(resource) if cfg["prefixed"] else resource
     db = get_db()
