@@ -1,6 +1,6 @@
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import exists, get_by_id, soft_delete, update
+from shared.db.ops import get_by_id, get_where, soft_delete, update
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -21,9 +21,32 @@ def handler(event, context):
         return error(404, "Vehículo no encontrado")
     if rec.get("is_deleted"):
         return ok(rec)  # already deleted -> idempotent
-    # Guard: llantas montadas requieren desmontaje manual primero.
-    if exists(db, t("tires"), {"unit_id": rid, "is_deleted": 0}):
-        return error(409, "El vehículo tiene llantas montadas; desmóntalas primero")
+    # Cascade: unmount every mounted tyre (platform + local) -> they go back to
+    # inventory (NOT deleted; each tyre keeps its sensor). Then the unit deletes.
+    mounted = get_where(
+        db, t("tires"),
+        "unit_id = %s AND (is_deleted IS NULL OR is_deleted = 0)", [rid], 1000,
+    )
+    if mounted:
+        st = SmartTyreClient()
+        for tyre in mounted:
+            if rec.get("daijin_id"):
+                try:
+                    st.post("/smartyre/openapi/vehicle/tyre/unbind", {
+                        "vehicleId": rec.get("daijin_id"),
+                        "tyreCode": str(tyre["id"]),
+                    })
+                except Exception:
+                    return error(502, "No se pudieron desmontar las llantas, intenta de nuevo")
+            try:
+                update(db, t("tires"), tyre["id"], {
+                    "unit_id": None, "is_mounted": 0, "axle_index": None,
+                    "wheel_index": None, "mount_position": None, "updated_at": now_ms(),
+                })
+            except Exception as e:
+                db.rollback()
+                return error(500, f"DB error (desmontar llanta {tyre['id']}): {e}")
+        db.commit()
 
     # Si tiene Qbox asignado, se desvincula automáticamente (queda libre) antes de borrar.
     if rec.get("tbox_id"):
