@@ -49,6 +49,29 @@ def handler(event, context):
     live_sql = "folio = %s AND company_id = %s AND (is_deleted IS NULL OR is_deleted = 0)"
     live_vals = [body.folio, body.company_id]
 
+    # (folio, company_id) has a UNIQUE index (named `prefix`), so a soft-deleted row
+    # holding that folio is freed (tombstone) so the tyre can be re-created.
+    tire_row = {
+        "prefix": body.prefix,
+        "folio": body.folio,
+        "company_id": body.company_id,
+        "tires_catalog_id": body.tires_catalog_id,
+        "unit_id": body.unit_id,
+        "sensor_id": body.sensor_id,
+        "current_depth": body.current_depth,
+        "tire_mileage": body.tire_mileage,
+        "is_mounted": body.is_mounted,
+        "mount_position": body.mount_position,
+        "axle_index": body.axle_index,
+        "wheel_index": body.wheel_index,
+        "cost": body.cost,
+        "supplier_id": body.supplier_id,
+        "life_number": body.life_number,
+        "mounted_millage": 0,
+        "status": "registering",
+        "updated_at": now_ms(),
+    }
+
     # 2. Local-first + idempotency by (folio, company_id), LIVE rows only.
     try:
         rows = get_where(db, t("tires"), live_sql, live_vals, 1)
@@ -61,42 +84,34 @@ def handler(event, context):
             local_id = existing["id"]
         else:
             try:
-                rec = insert(db, t("tires"), {
-                    "prefix": body.prefix,
-                    "folio": body.folio,
-                    "company_id": body.company_id,
-                    "tires_catalog_id": body.tires_catalog_id,
-                    "unit_id": body.unit_id,
-                    "sensor_id": body.sensor_id,
-                    "current_depth": body.current_depth,
-                    "tire_mileage": body.tire_mileage,
-                    "is_mounted": body.is_mounted,
-                    "mount_position": body.mount_position,
-                    "axle_index": body.axle_index,
-                    "wheel_index": body.wheel_index,
-                    "cost": body.cost,
-                    "supplier_id": body.supplier_id,
-                    "life_number": body.life_number,
-                    "mounted_millage": 0,
-                    "status": "registering",
-                    "updated_at": now_ms(),
-                })
+                rec = insert(db, t("tires"), tire_row)
                 db.commit()
                 local_id = rec["id"]
             except Exception:
-                # No UNIQUE on (folio, company_id): a deleted row does not block a fresh
-                # insert, so a re-alta after delete just creates a new row. This branch
-                # only handles a race with a concurrent LIVE create.
                 db.rollback()
-                rows = get_where(db, t("tires"), live_sql, live_vals, 1)
-                existing = rows[0] if rows else None
-                if not existing:
-                    raise
-                if existing.get("prefix") != body.prefix:
-                    return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
-                if existing.get("daijin_id"):
-                    return ok(existing)
-                local_id = existing["id"]
+                # UNIQUE(folio, company_id): a soft-deleted row may hold it. Don't reuse
+                # that dead row (stays deleted), but free its folio and insert a fresh row.
+                dead = get_by_fields(db, t("tires"), key)
+                if dead and dead.get("is_deleted"):
+                    update(db, t("tires"), dead["id"], {
+                        "folio": f"{body.folio}__del{dead['id']}",
+                        "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    rec = insert(db, t("tires"), tire_row)
+                    db.commit()
+                    local_id = rec["id"]
+                else:
+                    # Race with a concurrent LIVE create.
+                    rows = get_where(db, t("tires"), live_sql, live_vals, 1)
+                    existing = rows[0] if rows else None
+                    if not existing:
+                        raise
+                    if existing.get("prefix") != body.prefix:
+                        return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+                    if existing.get("daijin_id"):
+                        return ok(existing)
+                    local_id = existing["id"]
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (insert tire): {e}")
