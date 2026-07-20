@@ -19,6 +19,12 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
           Resource: '*'
+        # bulk_create dispara al worker de sincronización y este se re-invoca a sí
+        # mismo (continuación por timeout / pases de reintento).
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
 
 package:
   patterns:
@@ -216,6 +222,27 @@ functions:
           path: /tires/{id}/sensors/unbind
           method: post
           cors: true
+
+  # Importación masiva de sensores (Excel en el FE). Inserta el lote local como
+  # 'registering' y delega TODO el tráfico a Dajin al worker asíncrono.
+  bulkCreateSensors:
+    handler: functions/sensors/bulk_create.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+    events:
+      - http:
+          path: /sensors/bulk
+          method: post
+          cors: true
+
+  # Worker del bulk: sin API Gateway (sin tope de 29 s). Se auto-encadena si se
+  # queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
+  # ids de su lote — NO es la reconciliación y no ve filas viejas.
+  sensorsBulkSyncWorker:
+    handler: functions/sensors/bulk_sync_worker.handler
+    timeout: 900
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
 
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
   reconcile:
