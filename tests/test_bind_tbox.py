@@ -59,9 +59,10 @@ def test_assign_tbox_happy(monkeypatch):
     resp = mod.handler(_ev(1, 20), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["tbox_id"] == 20
-    # a Dajin: vehicle/update con el daijin del vehículo y del tbox
+    # a Dajin: vehicle/update con el daijin del vehículo y el CÓDIGO del tbox
+    # (la plataforma vincula por tboxCode, no por el id del tbox)
     assert st.posts[0][1]["id"] == "33369"
-    assert st.posts[0][1]["tboxId"] == "34351"
+    assert st.posts[0][1]["tboxCode"] == "10B41D30EA79"
 
 
 def test_tbox_not_synced_409(monkeypatch):
