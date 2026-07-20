@@ -18,6 +18,7 @@ class FakeStore:
     def __init__(self, rows, bound=False):
         self.rows = rows
         self.bound = bound          # what exists() returns (asset bound or not)
+        self.mounted = []           # tires que get_where devuelve (cascada del vehículo)
         self.soft_deleted = []      # ids passed to soft_delete (keeps daijin_id)
         self.updated = []           # (id, data) passed to update
 
@@ -38,6 +39,23 @@ class FakeStore:
     def exists(self, db, table, filters):
         return self.bound
 
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # vdel lo usa para listar llantas montadas de la unidad (cascada).
+        return [dict(r) for r in self.mounted]
+
+
+class FakeSmartTyre:
+    """OpenAPI client stub: los deletes en cascada llaman unbind antes de borrar."""
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.posts = []
+
+    def post(self, path, body):
+        if self.fail:
+            raise ConnectionError("Dajin down")
+        self.posts.append((path, body))
+        return None
+
 
 class FakeRemote:
     """Stand-in for attempt_delete: records calls, returns a fixed outcome."""
@@ -50,13 +68,17 @@ class FakeRemote:
         return self.outcome
 
 
-def _wire(monkeypatch, mod, store, remote):
+def _wire(monkeypatch, mod, store, remote, st=None):
+    st = st or FakeSmartTyre()
     monkeypatch.setattr(mod, "get_db", lambda: FakeDB())
     monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
     monkeypatch.setattr(mod, "soft_delete", store.soft_delete)
     monkeypatch.setattr(mod, "update", store.update)
     monkeypatch.setattr(mod, "exists", store.exists, raising=False)
+    monkeypatch.setattr(mod, "get_where", store.get_where, raising=False)
+    monkeypatch.setattr(mod, "SmartTyreClient", lambda: st, raising=False)
     monkeypatch.setattr(mod, "attempt_delete", remote)
+    return st
 
 
 def _ev(rid):
@@ -109,14 +131,25 @@ def test_vehicle_delete_transient_pending(monkeypatch):
     assert store.soft_deleted == [1] and store.updated == []
 
 
-# --- guard local (vinculado): 409 y NO se llama a Dajin ---
-def test_vehicle_delete_blocked_when_bound(monkeypatch):
-    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}}, bound=True)
+# --- cascada: la unidad desmonta sus llantas (plataforma + local) y luego se borra ---
+# (antes esto bloqueaba con 409; el borrado ahora hace unbind automático)
+def test_vehicle_delete_unmounts_mounted_tires(monkeypatch):
+    store = FakeStore({
+        1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"},
+        10: {"id": 10, "unit_id": 1, "is_mounted": 1},
+    })
+    store.mounted = [store.rows[10]]
     remote = FakeRemote((DONE, None))
-    _wire(monkeypatch, vdel, store, remote)
+    st = _wire(monkeypatch, vdel, store, remote)
     resp = vdel.handler(_ev(1), None)
-    assert resp["statusCode"] == 409
-    assert remote.calls == []                          # ni siquiera se intentó en Dajin
+    assert resp["statusCode"] == 200
+    # unbind remoto de la llanta + desmontaje local, ANTES del borrado remoto
+    assert ("/smartyre/openapi/vehicle/tyre/unbind",
+            {"vehicleId": "33", "tyreCode": "10"}) in st.posts
+    assert store.rows[10]["unit_id"] is None
+    assert store.rows[10]["is_mounted"] == 0
+    assert remote.calls == [("vehicle", "33")]
+    assert store.rows[1]["is_deleted"] == 1
 
 
 def test_vehicle_not_found_404(monkeypatch):
@@ -145,23 +178,38 @@ def test_tire_delete_dajin_ok(monkeypatch):
     assert remote.calls == [("tyre", "77")]
 
 
-def test_tire_delete_blocked_when_mounted_or_has_sensor(monkeypatch):
-    store = FakeStore({5: {"id": 5, "is_deleted": 0, "unit_id": 1, "sensor_id": None,
-                           "daijin_id": "77"}})
+# (antes montada/con sensor bloqueaba con 409; el borrado ahora desvincula en cascada)
+def test_tire_delete_unmounts_from_vehicle_first(monkeypatch):
+    store = FakeStore({
+        5: {"id": 5, "is_deleted": 0, "unit_id": 1, "sensor_id": None,
+            "daijin_id": "77", "axle_index": 2, "wheel_index": 4},
+        1: {"id": 1, "daijin_id": "33"},
+    })
     remote = FakeRemote((DONE, None))
-    _wire(monkeypatch, tdel, store, remote)
+    st = _wire(monkeypatch, tdel, store, remote)
     resp = tdel.handler(_ev(5), None)
-    assert resp["statusCode"] == 409
-    assert remote.calls == []
+    assert resp["statusCode"] == 200
+    assert ("/smartyre/openapi/vehicle/tyre/unbind",
+            {"vehicleId": "33", "tyreCode": "5"}) in st.posts
+    assert store.rows[5]["unit_id"] is None
+    assert remote.calls == [("tyre", "77")]
 
 
-def test_tire_delete_blocked_when_has_sensor(monkeypatch):
-    store = FakeStore({5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": 9,
-                           "daijin_id": "77"}})
+def test_tire_delete_frees_sensor_first(monkeypatch):
+    store = FakeStore({
+        5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": 9,
+            "daijin_id": "77", "axle_index": None, "wheel_index": None},
+        9: {"id": 9, "sensorCode": "A4C13873C3E6"},
+    })
     remote = FakeRemote((DONE, None))
-    _wire(monkeypatch, tdel, store, remote)
-    assert tdel.handler(_ev(5), None)["statusCode"] == 409
-    assert remote.calls == []
+    st = _wire(monkeypatch, tdel, store, remote)
+    resp = tdel.handler(_ev(5), None)
+    assert resp["statusCode"] == 200
+    # el sensor se libera (queda en inventario) antes de borrar la llanta
+    assert st.posts[0][0] == "/smartyre/openapi/tyre/sensor/unbind"
+    assert st.posts[0][1]["sensorCode"] == "A4C13873C3E6"
+    assert store.rows[5]["sensor_id"] is None
+    assert remote.calls == [("tyre", "77")]
 
 
 # ---------- sensor y tbox: mismo contrato Dajin-first ----------

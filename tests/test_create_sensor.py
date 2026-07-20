@@ -43,6 +43,13 @@ class FakeStore:
                 return dict(r)
         return None
 
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # live_sql del handler: sensorCode = %s AND (is_deleted IS NULL OR is_deleted = 0)
+        code = params[0]
+        out = [dict(r) for r in self.rows.values()
+               if r.get("sensorCode") == code and not r.get("is_deleted")]
+        return out[:limit]
+
 
 class FakeSmartTyre:
     def __init__(self, existing=None, after=None, fail=False):
@@ -76,6 +83,7 @@ def wire(monkeypatch):
         monkeypatch.setattr(mod, "update", store.update)
         monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
         monkeypatch.setattr(mod, "get_by_field", store.get_by_field)
+        monkeypatch.setattr(mod, "get_where", store.get_where)
         monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
         return store, db
 
@@ -165,7 +173,12 @@ def test_concurrent_duplicate_insert_resumes(wire, monkeypatch):
         state["raced"] = True  # alguien más lo insertó en paralelo
         raise Exception("Duplicate entry 'A4C13873C3E6' for key 'sensorCode'")
 
+    def gw(_db, _table, _sql, params, _limit=200):
+        # antes de la carrera el código no existe; después, la fila 77 está viva
+        return [dict(store.rows[77])] if state["raced"] else []
+
     monkeypatch.setattr(mod, "get_by_field", gbf)
+    monkeypatch.setattr(mod, "get_where", gw)
     monkeypatch.setattr(mod, "insert", failing_insert)
 
     resp = mod.handler(_event(), None)

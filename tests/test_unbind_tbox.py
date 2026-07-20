@@ -45,7 +45,7 @@ def test_unassign_tbox_happy(monkeypatch):
     resp = mod.handler({"pathParameters": {"id": "1"}}, None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["tbox_id"] is None
-    assert st.posts[0][1]["tboxId"] == ""
+    assert st.posts[0][1]["tboxCode"] == ""  # se limpia por código, no por id
 
 
 def test_no_tbox_409(monkeypatch):
