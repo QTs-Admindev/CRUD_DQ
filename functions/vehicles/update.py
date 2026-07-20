@@ -2,62 +2,43 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
-from shared.smarttyre.client import SmartTyreClient
+from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
 
 class UpdateVehicleRequest(BaseModel):
-    unit_catalog_id: int | None = None
-    unit_identifier: str | None = None
-    is_tractor: bool | None = None
-    status: str | None = None
+    unit_identifier: str
 
 
 def handler(event, context):
+    # PUT /vehicles/{id} — solo se permite editar el unit_identifier.
     try:
-        vehicle_id = int(event["pathParameters"]["id"])
+        unit_id = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
         return error(400, "id de vehículo inválido")
-
     try:
         body = UpdateVehicleRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
         return error(422, e.errors())
 
     db = get_db()
-    vehicle = get_by_id(db, "vehicles", vehicle_id)
-    if not vehicle:
+    unit = get_by_id(db, t("units"), unit_id)
+    if not unit:
         return error(404, "Vehículo no encontrado")
 
-    smarttyre_payload = {}
-    if body.unit_catalog_id is not None:
-        smarttyre_payload["unitCatalogId"] = body.unit_catalog_id
-    if body.unit_identifier is not None:
-        smarttyre_payload["unitIdentifier"] = body.unit_identifier
-    if body.is_tractor is not None:
-        smarttyre_payload["isTractor"] = 1 if body.is_tractor else 0
-
-    if smarttyre_payload:
-        smarttyre_payload["id"] = vehicle["smarttyre_id"]
-        try:
-            st = SmartTyreClient()
-            st.post("/smartyre/openapi/vehicle/update", smarttyre_payload)
-        except Exception as e:
-            return error(502, f"SmartTyre error: {e}")
-
-    mysql_payload = {k: v for k, v in body.model_dump().items() if v is not None}
-    if body.is_tractor is not None:
-        mysql_payload["is_tractor"] = 1 if body.is_tractor else 0
-
-    if not mysql_payload:
-        return ok(vehicle)
-
+    # unit_identifier es campo LOCAL (Dajin usa licensePlateNumber=id local) -> no toca Dajin.
     try:
-        record = update(db, "vehicles", vehicle_id, mysql_payload)
+        rec = update(db, t("units"), unit_id, {
+            "unit_identifier": body.unit_identifier,
+            "updated_at": now_ms(),
+        })
         db.commit()
-        return ok(record)
+        return ok(rec)
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error: {e}")
+        if "Duplicate" in str(e):
+            return error(409, "Ya existe una unidad con ese identificador")
+        return error(500, f"DB error (update unit): {e}")

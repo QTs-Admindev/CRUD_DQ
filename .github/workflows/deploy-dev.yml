@@ -30,7 +30,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-1
+          aws-region: us-east-1
 
       - name: Install Serverless Framework
         run: |
@@ -38,6 +38,9 @@ jobs:
           npm install
 
       - name: Deploy to AWS Lambda (dev)
+        # CUTOVER 2026-07-06: dev apunta a las tablas REALES (units, tires, sensors,
+        # tboxes), ya no a los clones test_. Sin TABLE_PREFIX = sin prefijo (serverless.yml
+        # lo default-ea a '' vía ${env:TABLE_PREFIX, ''}).
         run: serverless deploy --stage dev --verbose
 
       - name: Display endpoints

@@ -5,10 +5,13 @@ frameworkVersion: '3'
 provider:
   name: aws
   runtime: python3.12
-  region: us-west-1
+  region: us-east-1
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 30
+  environment:
+    # Prefijo de tablas: "test_" para probar contra los clones sin tocar datos reales.
+    TABLE_PREFIX: ${env:TABLE_PREFIX, ''}
   iam:
     role:
       statements:
@@ -16,6 +19,12 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
           Resource: '*'
+        # bulk_create dispara al worker de sincronización y este se re-invoca a sí
+        # mismo (continuación por timeout / pases de reintento).
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
 
 package:
   patterns:
@@ -86,11 +95,99 @@ functions:
           method: post
           cors: true
 
+  listAssets:
+    handler: functions/lists/list_assets.handler
+    events:
+      - http:
+          path: /list/{resource}
+          method: get
+          cors: true
+
+  getStatus:
+    handler: functions/status/get_status.handler
+    events:
+      - http:
+          path: /status/{resource}/{id}
+          method: get
+          cors: true
+
+  bindTbox:
+    handler: functions/vehicles/bind_tbox.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tbox/bind
+          method: post
+          cors: true
+
+  unbindTbox:
+    handler: functions/vehicles/unbind_tbox.handler
+    events:
+      - http:
+          path: /vehicles/{id}/tbox/unbind
+          method: post
+          cors: true
+
+  deleteVehicle:
+    handler: functions/vehicles/delete.handler
+    events:
+      - http:
+          path: /vehicles/{id}
+          method: delete
+          cors: true
+
+  deleteTire:
+    handler: functions/tires/delete.handler
+    events:
+      - http:
+          path: /tires/{id}
+          method: delete
+          cors: true
+
+  deleteSensor:
+    handler: functions/sensors/delete.handler
+    events:
+      - http:
+          path: /sensors/{id}
+          method: delete
+          cors: true
+
+  deleteTbox:
+    handler: functions/tboxes/delete.handler
+    events:
+      - http:
+          path: /tboxes/{id}
+          method: delete
+          cors: true
+
+  assignSensor:
+    handler: functions/sensors/assign.handler
+    events:
+      - http:
+          path: /sensors/{id}/assign
+          method: post
+          cors: true
+
+  assignTbox:
+    handler: functions/tboxes/assign.handler
+    events:
+      - http:
+          path: /tboxes/{id}/assign
+          method: post
+          cors: true
+
   updateTbox:
     handler: functions/tboxes/update.handler
     events:
       - http:
           path: /tboxes/{id}
+          method: put
+          cors: true
+
+  updateSensor:
+    handler: functions/sensors/update.handler
+    events:
+      - http:
+          path: /sensors/{id}
           method: put
           cors: true
 
@@ -125,6 +222,39 @@ functions:
           path: /tires/{id}/sensors/unbind
           method: post
           cors: true
+
+  # Importación masiva de sensores (Excel en el FE). Inserta el lote local como
+  # 'registering' y delega TODO el tráfico a Dajin al worker asíncrono.
+  bulkCreateSensors:
+    handler: functions/sensors/bulk_create.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+    events:
+      - http:
+          path: /sensors/bulk
+          method: post
+          cors: true
+
+  # Worker del bulk: sin API Gateway (sin tope de 29 s). Se auto-encadena si se
+  # queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
+  # ids de su lote — NO es la reconciliación y no ve filas viejas.
+  sensorsBulkSyncWorker:
+    handler: functions/sensors/bulk_sync_worker.handler
+    timeout: 900
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+
+  # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
+  reconcile:
+    handler: functions/reconciliation/reconcile.handler
+    timeout: 120
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          # CUTOVER 2026-07-06: desactivado temporalmente. Al pasar dev a tablas REALES
+          # hay ~137 filas viejas en status='registering' (120 sensors, 9 tires, 8 tboxes)
+          # que este barrido finalizaría en masa. Reactivar tras revisarlas manualmente.
+          enabled: false
 
 plugins:
   - serverless-python-requirements

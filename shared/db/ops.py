@@ -31,3 +31,84 @@ def get_by_field(db, table: str, field: str, value) -> dict | None:
     with db.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(sql, [value])
         return cur.fetchone()
+
+
+def get_many(db, table: str, columns: str = "*", filters: dict | None = None,
+             limit: int = 300) -> list[dict]:
+    """Lista filas (para poblar selects del tester). Orden id DESC para ver lo reciente."""
+    sql = f"SELECT {columns} FROM {table}"
+    vals: list = []
+    if filters:
+        sql += " WHERE " + " AND ".join(f"{k} = %s" for k in filters)
+        vals = list(filters.values())
+    sql += f" ORDER BY id DESC LIMIT {int(limit)}"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, vals)
+        return list(cur.fetchall())
+
+
+def exists(db, table: str, filters: dict) -> bool:
+    """True if at least one row matches all filters. Used for binding guards."""
+    where = " AND ".join(f"{k} = %s" for k in filters)
+    sql = f"SELECT 1 FROM {table} WHERE {where} LIMIT 1"
+    with db.cursor() as cur:
+        cur.execute(sql, list(filters.values()))
+        return cur.fetchone() is not None
+
+
+def soft_delete(db, table: str, record_id: int) -> dict | None:
+    """Soft delete: marca is_deleted=1 sin borrar la fila (conserva historial + daijin_id)."""
+    sql = f"UPDATE {table} SET is_deleted = 1 WHERE id = %s"
+    with db.cursor() as cur:
+        cur.execute(sql, [record_id])
+    return get_by_id(db, table, record_id)
+
+
+def get_where(db, table: str, where_sql: str, params=(), limit: int = 200) -> list[dict]:
+    """Lista filas por una condición SQL libre (para la reconciliación).
+
+    where_sql es una condición con placeholders %s (ej. "status = %s" o
+    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC (procesar lo más viejo).
+    """
+    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id ASC LIMIT {int(limit)}"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, list(params))
+        return list(cur.fetchall())
+
+
+def get_in(db, table: str, field: str, values, columns: str = "*") -> list[dict]:
+    """Fetch every row whose `field` is IN `values`, chunked so huge lists (bulk
+    import: 2000+ codes) never build a single oversized IN clause."""
+    out: list[dict] = []
+    vals = list(values)
+    for i in range(0, len(vals), 500):
+        chunk = vals[i:i + 500]
+        placeholders = ", ".join(["%s"] * len(chunk))
+        sql = f"SELECT {columns} FROM {table} WHERE {field} IN ({placeholders})"
+        with db.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute(sql, chunk)
+            out.extend(cur.fetchall())
+    return out
+
+
+def insert_many(db, table: str, columns: list[str], rows: list[tuple]) -> int:
+    """Bulk INSERT via executemany. Returns the inserted count; caller commits.
+    One statement round-trip instead of N insert()+get_by_id() pairs — the per-row
+    helper would cost ~4 queries per sensor on a 2000-row import."""
+    if not rows:
+        return 0
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
+    with db.cursor() as cur:
+        cur.executemany(sql, rows)
+        return cur.rowcount
+
+
+def get_by_fields(db, table: str, filters: dict) -> dict | None:
+    """Busca por una llave compuesta (varios campos AND). Para natural keys como
+    (prefix, folio, company_id) en tires o (unit_identifier, company_id, unit_catalog_id)."""
+    where = " AND ".join(f"{k} = %s" for k in filters)
+    sql = f"SELECT * FROM {table} WHERE {where} LIMIT 1"
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, list(filters.values()))
+        return cur.fetchone()

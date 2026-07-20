@@ -8,3 +8,9 @@ package-lock.json
 *.zip
 .venv/
 venv/
+tester.html
+.claude/
+.playwright-cli/
+
+*.png
+dajin_*.png

@@ -2,52 +2,160 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.audit import audit
+from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import insert
+from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
 from shared.smarttyre.client import SmartTyreClient
-from shared.utils.response import error, ok
+from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
+from shared.utils.clock import now_ms
+from shared.utils.response import error, ok, pending
+
+# Defaults que el sistema viejo manda a Dajin (no hay mapping tires_catalog -> Dajin).
+TYRE_BRAND_ID = "1"
+TYRE_SIZE_ID = "121"
+TYRE_PATTERN = "FS591"
 
 
 class CreateTireRequest(BaseModel):
-    tyre_code: str
+    prefix: str
+    folio: str
     company_id: int
-    prefix: str = ""
-    folio: str = ""
+    tires_catalog_id: int
+    status: str = "new"  # status de negocio final (new/used/renewed/...)
+    unit_id: int | None = None
+    sensor_id: int | None = None
+    current_depth: float = 0
+    tire_mileage: float = 0
+    is_mounted: int = 0
+    mount_position: int | None = None
+    axle_index: int | None = None
+    wheel_index: int | None = None
+    cost: float | None = None
+    supplier_id: int | None = None
+    life_number: int | None = None
 
 
 def handler(event, context):
+    # 1. Validar input
     try:
         body = CreateTireRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
         return error(422, e.errors())
 
-    try:
-        st = SmartTyreClient()
-        st.post("/smartyre/openapi/tyre/insert", {
-            "tyreCode": body.tyre_code,
-            "companyId": body.company_id,
-        })
-    except Exception as e:
-        return error(502, f"SmartTyre error: {e}")
+    db = get_db()
+    # El folio debe ser único POR COMPAÑÍA (puede repetirse entre compañías distintas).
+    key = {"folio": body.folio, "company_id": body.company_id}
+    # LIVE = not soft-deleted; a deleted row is never reused nor matched.
+    live_sql = "folio = %s AND company_id = %s AND (is_deleted IS NULL OR is_deleted = 0)"
+    live_vals = [body.folio, body.company_id]
 
-    try:
-        resp = st.get("/smartyre/openapi/tyre/list", {"tyreCode": body.tyre_code})
-        smarttyre_id = resp["records"][0]["id"]
-    except Exception as e:
-        return error(502, f"SmartTyre ID lookup failed: {e}")
+    # (folio, company_id) has a UNIQUE index (named `prefix`), so a soft-deleted row
+    # holding that folio is freed (tombstone) so the tyre can be re-created.
+    tire_row = {
+        "prefix": body.prefix,
+        "folio": body.folio,
+        "company_id": body.company_id,
+        "tires_catalog_id": body.tires_catalog_id,
+        "unit_id": body.unit_id,
+        "sensor_id": body.sensor_id,
+        "current_depth": body.current_depth,
+        "tire_mileage": body.tire_mileage,
+        "is_mounted": body.is_mounted,
+        "mount_position": body.mount_position,
+        "axle_index": body.axle_index,
+        "wheel_index": body.wheel_index,
+        "cost": body.cost,
+        "supplier_id": body.supplier_id,
+        "life_number": body.life_number,
+        "mounted_millage": 0,
+        "status": "registering",
+        "updated_at": now_ms(),
+    }
 
+    # 2. Local-first + idempotency by (folio, company_id), LIVE rows only.
     try:
-        db = get_db()
-        record = insert(db, "tires", {
-            "tyre_code": body.tyre_code,
-            "company_id": body.company_id,
-            "prefix": body.prefix,
-            "folio": body.folio,
-            "smarttyre_id": smarttyre_id,
-            "is_mounted": 0,
-        })
-        db.commit()
-        return ok(record)
+        rows = get_where(db, t("tires"), live_sql, live_vals, 1)
+        existing = rows[0] if rows else None
+        if existing and existing.get("prefix") != body.prefix:
+            return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+        if existing and existing.get("daijin_id"):
+            return ok(existing)
+        if existing:
+            local_id = existing["id"]
+        else:
+            try:
+                rec = insert(db, t("tires"), tire_row)
+                db.commit()
+                local_id = rec["id"]
+            except Exception:
+                db.rollback()
+                # UNIQUE(folio, company_id): a soft-deleted row may hold it. Don't reuse
+                # that dead row (stays deleted), but free its folio and insert a fresh row.
+                dead = get_by_fields(db, t("tires"), key)
+                if dead and dead.get("is_deleted"):
+                    update(db, t("tires"), dead["id"], {
+                        "folio": f"{body.folio}__del{dead['id']}",
+                        "updated_at": now_ms(),
+                    })
+                    db.commit()
+                    rec = insert(db, t("tires"), tire_row)
+                    db.commit()
+                    local_id = rec["id"]
+                else:
+                    # Race with a concurrent LIVE create.
+                    rows = get_where(db, t("tires"), live_sql, live_vals, 1)
+                    existing = rows[0] if rows else None
+                    if not existing:
+                        raise
+                    if existing.get("prefix") != body.prefix:
+                        return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+                    if existing.get("daijin_id"):
+                        return ok(existing)
+                    local_id = existing["id"]
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (SmartTyre ID={smarttyre_id}): {e}")
+        return error(500, f"DB error (insert tire): {e}")
+
+    # 3. Sync con Dajin. Natural key = id local (tyreCode) -> assume_new (no preexiste).
+    try:
+        st = SmartTyreClient()
+        daijin_id = resolve_or_create(
+            st,
+            list_path="/smartyre/openapi/tyre/list",
+            list_filter={"tyreCode": str(local_id)},
+            insert_path="/smartyre/openapi/tyre/insert",
+            insert_payload={
+                "tyreCode": str(local_id),
+                "tyreBrandId": TYRE_BRAND_ID,
+                "tyreSizeId": TYRE_SIZE_ID,
+                "tyrePattern": TYRE_PATTERN,
+                "initialTreadDepth": str(body.current_depth or 0),
+                "totalDistance": body.tire_mileage or 0,
+            },
+            assume_new=True,
+        )
+    except SmartTyreNotResolved:
+        audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
+              natural_key=body.folio, company_id=body.company_id, result="pending")
+        return pending(get_by_id(db, t("tires"), local_id))
+    except Exception as e:
+        audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
+              natural_key=body.folio, company_id=body.company_id, result="pending", error=str(e))
+        return pending({"id": local_id, "prefix": body.prefix, "folio": body.folio, "reason": str(e)})
+
+    # 4. Activar con el status de negocio.
+    try:
+        rec = update(db, t("tires"), local_id, {
+            "daijin_id": daijin_id,
+            "status": body.status,
+            "updated_at": now_ms(),
+        })
+        db.commit()
+        audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
+              natural_key=body.folio, company_id=body.company_id,
+              daijin_id=daijin_id, result="success")
+        return ok(rec)
+    except Exception as e:
+        db.rollback()
+        return error(500, f"DB error (activate tire, daijin_id={daijin_id}): {e}")
