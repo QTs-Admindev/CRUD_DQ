@@ -41,8 +41,20 @@ def handler(event, context):
                 "wheelIndex": rec.get("wheel_index"),
                 "sensorCode": sensor.get("sensorCode") if sensor else None,
             })
-        except Exception:
-            return error(502, "No se pudo liberar el sensor, intenta de nuevo")
+        except Exception as e:
+            # Una llanta ALMACENADA puede conservar su sensor (regla de negocio),
+            # pero en la plataforma la cadena vehículo-llanta-sensor ya se disolvió
+            # al desmontarla: el unbind remoto sin vehicleId no tiene contexto y
+            # Dajin lo rechaza. En ese caso el unbind es solo higiene: se libera
+            # el sensor localmente y el borrado continúa. Si la llanta sigue
+            # MONTADA, el rechazo es real y aborta como antes.
+            if rec.get("unit_id"):
+                return error(502, "No se pudo liberar el sensor, intenta de nuevo")
+            audit(db, event, context, action="unbind", asset_type="sensor",
+                  asset_id=rec["sensor_id"],
+                  natural_key=sensor.get("sensorCode") if sensor else None,
+                  company_id=rec.get("company_id"), result="pending",
+                  error=f"unbind remoto rechazado (llanta almacenada): {e}")
         try:
             update(db, t("tires"), rid, {"sensor_id": None, "updated_at": now_ms()})
             db.commit()

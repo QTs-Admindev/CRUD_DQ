@@ -195,6 +195,41 @@ def test_tire_delete_unmounts_from_vehicle_first(monkeypatch):
     assert remote.calls == [("tyre", "77")]
 
 
+def test_tire_delete_stored_with_sensor_frees_it_even_if_dajin_rejects(monkeypatch):
+    # Regla de negocio: una llanta puede almacenarse CON su sensor. Al borrarla,
+    # el unbind remoto no tiene contexto de vehículo y Dajin lo rechaza — eso no
+    # debe bloquear: el sensor se libera localmente y el borrado continúa.
+    store = FakeStore({
+        5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": 9,
+            "daijin_id": "77", "axle_index": None, "wheel_index": None},
+        9: {"id": 9, "sensorCode": "A4C13873C3E6"},
+    })
+    remote = FakeRemote((DONE, None))
+    _wire(monkeypatch, tdel, store, remote, st=FakeSmartTyre(fail=True))
+    resp = tdel.handler(_ev(5), None)
+    assert resp["statusCode"] == 200
+    assert store.rows[5]["sensor_id"] is None      # liberado (sigue en inventario)
+    assert store.rows[5]["is_deleted"] == 1
+    assert remote.calls == [("tyre", "77")]
+
+
+def test_tire_delete_mounted_sensor_unbind_failure_still_aborts(monkeypatch):
+    # Montada, el rechazo del unbind del sensor SÍ es real: 502 y nada local se toca.
+    store = FakeStore({
+        5: {"id": 5, "is_deleted": 0, "unit_id": 1, "sensor_id": 9,
+            "daijin_id": "77", "axle_index": 2, "wheel_index": 4},
+        1: {"id": 1, "daijin_id": "33"},
+        9: {"id": 9, "sensorCode": "A4C13873C3E6"},
+    })
+    remote = FakeRemote((DONE, None))
+    _wire(monkeypatch, tdel, store, remote, st=FakeSmartTyre(fail=True))
+    resp = tdel.handler(_ev(5), None)
+    assert resp["statusCode"] == 502
+    assert store.rows[5]["sensor_id"] == 9
+    assert store.rows[5]["is_deleted"] == 0
+    assert remote.calls == []
+
+
 def test_tire_delete_frees_sensor_first(monkeypatch):
     store = FakeStore({
         5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": 9,
