@@ -244,6 +244,60 @@ functions:
     environment:
       BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
 
+  # Paquetes de hardware: kit (1 TBox + N sensores, sin llantas) preparado en la
+  # compañía admin (2), movido a otra compañía y luego montado en una unidad real.
+  createPackage:
+    handler: functions/packages/create.handler
+    events:
+      - http:
+          path: /packages
+          method: post
+          cors: true
+
+  listPackages:
+    handler: functions/packages/list.handler
+    events:
+      - http:
+          path: /packages
+          method: get
+          cors: true
+
+  getPackage:
+    handler: functions/packages/get.handler
+    events:
+      - http:
+          path: /packages/{id}
+          method: get
+          cors: true
+
+  deletePackage:
+    handler: functions/packages/delete.handler
+    events:
+      - http:
+          path: /packages/{id}
+          method: delete
+          cors: true
+
+  movePackage:
+    handler: functions/packages/move.handler
+    events:
+      - http:
+          path: /packages/{id}/move
+          method: post
+          cors: true
+
+  # assign crea llantas genéricas cuando la posición está vacía: necesita el
+  # catálogo de llanta genérica que usa el alta de esas llantas.
+  assignPackage:
+    handler: functions/packages/assign.handler
+    environment:
+      GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
+    events:
+      - http:
+          path: /packages/{id}/assign
+          method: post
+          cors: true
+
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
   reconcile:
     handler: functions/reconciliation/reconcile.handler
