@@ -24,7 +24,9 @@ provider:
         - Effect: Allow
           Action:
             - lambda:InvokeFunction
-          Resource: arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
+          Resource:
+            - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
+            - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-tboxesBulkSyncWorker
 
 package:
   patterns:
@@ -243,6 +245,38 @@ functions:
     timeout: 900
     environment:
       BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+
+  # Importación masiva de Qboxes (TBox) desde Excel en el FE. Igual que el bulk de
+  # sensores: inserta el lote local como 'registering' y delega TODO el tráfico a
+  # Dajin al worker asíncrono. Responde 202 al instante (fire-and-forget).
+  bulkCreateTboxes:
+    handler: functions/tboxes/bulk_create.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-tboxesBulkSyncWorker
+    events:
+      - http:
+          path: /tboxes/bulk
+          method: post
+          cors: true
+
+  # Estado del lote (solo lectura) para la barra de progreso del FE: cuántos ya
+  # sincronizaron vs cuántos siguen 'registering'.
+  bulkStatusTboxes:
+    handler: functions/tboxes/bulk_status.handler
+    events:
+      - http:
+          path: /tboxes/bulk/status
+          method: post
+          cors: true
+
+  # Worker del bulk de Qboxes: sin API Gateway (sin tope de 29 s). Se auto-encadena
+  # si se queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
+  # ids de su lote — NO es la reconciliación y no ve filas viejas.
+  tboxesBulkSyncWorker:
+    handler: functions/tboxes/bulk_sync_worker.handler
+    timeout: 900
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-tboxesBulkSyncWorker
 
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
   reconcile:
