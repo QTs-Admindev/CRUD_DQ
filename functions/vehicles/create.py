@@ -48,8 +48,10 @@ def handler(event, context):
         "AND (is_deleted IS NULL OR is_deleted = 0)"
     )
     key_vals = [body.unit_identifier, body.company_id, body.unit_catalog_id]
+    # tbox_id is deliberately NOT part of the initial insert: the Qbox link is only
+    # recorded locally AFTER the platform confirms it (step 6), so MySQL never claims
+    # a bind the platform doesn't have.
     unit_fields = {
-        "tbox_id": body.tbox_id,
         "vin": body.vin,
         "plates": body.plates,
         "mileage": body.mileage,
@@ -127,7 +129,7 @@ def handler(event, context):
 
     is_tractor, model_id = _dajin_type(catalog)
 
-    # 4. Sync con Dajin. Natural key = id local (licensePlateNumber) -> assume_new.
+    # 4. Sync with the platform. Natural key = local id (licensePlateNumber) -> assume_new.
     try:
         st = SmartTyreClient()
         payload = {
@@ -135,7 +137,7 @@ def handler(event, context):
             "isTractor": is_tractor,
             "modelId": model_id,
             "axleTypeId": str(catalog.get("d_id") or ""),
-            "orgId": DAJIN_ORG_ID,  # Dajin siempre espera el org de Quinta (218), no el company_id
+            "orgId": DAJIN_ORG_ID,  # the platform always expects Quinta's org (218), not the company_id
         }
         daijin_id = resolve_or_create(
             st,
@@ -170,26 +172,54 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (activate unit, daijin_id={daijin_id}): {e}")
 
-    # 6. Si viene tbox, atarlo en DAJIN (vehicle/update con tboxId = daijin del tbox),
-    #    igual que el endpoint bind_tbox. El vínculo local (units.tbox_id) ya quedó en
-    #    el insert; esto lo refleja en Dajin. Best-effort: si falla, la unidad ya está
-    #    creada y el tbox se puede reasignar con /vehicles/{id}/tbox/bind.
+    # 6. Optional Qbox link (platform vehicle/update carrying the tbox). ALL-OR-NOTHING:
+    #    units.tbox_id is written ONLY after the platform confirms the link, so MySQL
+    #    never reports a Qbox bind the platform doesn't have. Before, tbox_id was set in
+    #    the insert and a failed link still returned 200 — that was the divergence.
     if body.tbox_id:
+        tbox = None
         try:
             tbox = get_by_id(db, t("tboxes"), body.tbox_id)
-            if tbox and tbox.get("daijin_id"):
-                st.post("/smartyre/openapi/vehicle/update", {
-                    "id": daijin_id,
-                    "isTractor": is_tractor,
-                    "licensePlateNumber": str(local_id),
-                    "axleTypeId": str(catalog.get("d_id") or ""),
-                    "modelId": model_id,
-                    "orgId": DAJIN_ORG_ID,  # Dajin siempre espera el org de Quinta (218), no el company_id
-                    "tboxCode": tbox["tboxCode"],
-                })
-            else:
-                return ok({**rec, "tbox_bind_warning": "el Qbox aún no está listo"})
         except Exception:
-            return ok({**rec, "tbox_bind_warning": "no se pudo vincular el Qbox"})
+            tbox = None
+
+        if not (tbox and tbox.get("daijin_id")):
+            # Qbox not synced with the platform yet -> can't link it there. Do NOT
+            # record it locally; report pending so the FE doesn't show full success.
+            audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
+                  natural_key=body.unit_identifier, company_id=body.company_id,
+                  daijin_id=daijin_id, result="pending",
+                  error="qbox link deferred: qbox not synced with the platform")
+            return pending({**rec,
+                            "tbox_bind_pending": "el Qbox aún no está sincronizado con la plataforma; vincúlalo cuando lo esté"})
+
+        try:
+            st.post("/smartyre/openapi/vehicle/update", {
+                "id": daijin_id,
+                "isTractor": is_tractor,
+                "licensePlateNumber": str(local_id),
+                "axleTypeId": str(catalog.get("d_id") or ""),
+                "modelId": model_id,
+                "orgId": DAJIN_ORG_ID,  # the platform always expects Quinta's org (218), not the company_id
+                "tboxCode": tbox["tboxCode"],
+            })
+        except Exception as e:
+            # Platform link failed -> DO NOT record tbox_id locally (would diverge). Audit
+            # the failure and report pending so it can be retried, not a fake success.
+            audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
+                  natural_key=body.unit_identifier, company_id=body.company_id,
+                  daijin_id=daijin_id, result="pending", error=f"qbox link failed on the platform: {e}")
+            return pending({**rec,
+                            "tbox_bind_pending": "no se pudo vincular el Qbox en la plataforma; queda pendiente de reintentar"})
+
+        # Platform confirmed the link -> now it's safe to record it locally.
+        try:
+            rec = update(db, t("units"), local_id, {"tbox_id": body.tbox_id, "updated_at": now_ms()})
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            # The platform has the link but the local write failed -> report it (not a
+            # silent success) so it gets reconciled/re-synced.
+            return error(500, f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
 
     return ok(rec)
