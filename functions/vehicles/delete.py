@@ -10,7 +10,7 @@ from functions.vehicles.create import _dajin_type
 
 
 def handler(event, context):
-    # DELETE /vehicles/{id} -> Dajin-first: borra en Dajin (basic-api) y luego soft-delete local.
+    # DELETE /vehicles/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
@@ -76,7 +76,7 @@ def handler(event, context):
             db.rollback()
             return error(500, f"DB error (desvincular Qbox): {e}")
 
-    # Dajin-first: intentar el borrado remoto antes de tocar local.
+    # La plataforma primero: intentar el borrado remoto antes de tocar local.
     daijin_id = rec.get("daijin_id")
     if daijin_id:
         status, msg = attempt_delete("vehicle", str(daijin_id))
@@ -87,7 +87,7 @@ def handler(event, context):
 
     try:
         if status == TRANSIENT:
-            # Dajin no respondió: borrado local hecho, limpieza remota pendiente
+            # La plataforma no respondió: borrado local hecho, limpieza remota pendiente
             # (conserva daijin_id -> la reconciliación lo retoma).
             rec = soft_delete(db, t("units"), rid)
             db.commit()

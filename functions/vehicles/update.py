@@ -29,7 +29,7 @@ def handler(event, context):
     if not unit:
         return error(404, "Vehículo no encontrado")
 
-    # unit_identifier es campo LOCAL (Dajin usa licensePlateNumber=id local) -> no toca Dajin.
+    # unit_identifier es campo LOCAL (la plataforma usa licensePlateNumber=id local) -> no toca la plataforma.
     try:
         rec = update(db, t("units"), unit_id, {
             "unit_identifier": body.unit_identifier,

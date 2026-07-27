@@ -28,7 +28,7 @@ class FakeSmartTyre:
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         return None
 
@@ -59,7 +59,7 @@ def test_assign_tbox_happy(monkeypatch):
     resp = mod.handler(_ev(1, 20), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["tbox_id"] == 20
-    # a Dajin: vehicle/update con el daijin del vehículo y el CÓDIGO del tbox
+    # a la plataforma: vehicle/update con el daijin del vehículo y el CÓDIGO del tbox
     # (la plataforma vincula por tboxCode, no por el id del tbox)
     assert st.posts[0][1]["id"] == "33369"
     assert st.posts[0][1]["tboxCode"] == "10B41D30EA79"

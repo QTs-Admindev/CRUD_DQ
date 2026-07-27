@@ -45,7 +45,7 @@ def handler(event, context):
             # Una llanta ALMACENADA puede conservar su sensor (regla de negocio),
             # pero en la plataforma la cadena vehículo-llanta-sensor ya se disolvió
             # al desmontarla: el unbind remoto sin vehicleId no tiene contexto y
-            # Dajin lo rechaza. En ese caso el unbind es solo higiene: se libera
+            # la plataforma lo rechaza. En ese caso el unbind es solo higiene: se libera
             # el sensor localmente y el borrado continúa. Si la llanta sigue
             # MONTADA, el rechazo es real y aborta como antes.
             if rec.get("unit_id"):

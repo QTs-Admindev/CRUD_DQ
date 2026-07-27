@@ -1,4 +1,4 @@
-"""Async worker that syncs a bulk-imported Qbox (TBox) batch against Dajin.
+"""Async worker that syncs a bulk-imported Qbox (TBox) batch against the platform.
 
 Invoked by bulk_create (Event invocation, no API Gateway → no 29 s cap; its own
 timeout is 900 s). It ONLY touches the ids it receives — old `registering` rows
@@ -7,16 +7,16 @@ reconciliation cron for bulk imports).
 
 Guarantees, without any cron:
   - Each id is resolved with the same idempotent `resolve_or_create` the single
-    create uses (GET before POST → replays never duplicate in Dajin).
+    create uses (GET before POST → replays never duplicate in the platform).
   - Running out of Lambda time → re-invokes itself with the remaining ids
     (same pass, no attempt burned).
-  - Rows that failed (Dajin timeout/refusal) → re-invoked as pass+1, with a
-    growing sleep between passes so a struggling Dajin gets breathing room,
+  - Rows that failed (the platform timeout/refusal) → re-invoked as pass+1, with a
+    growing sleep between passes so a struggling platform gets breathing room,
     up to MAX_PASSES. Whatever still fails stays `registering`, visible in the
     FE, and re-importing the same file re-queues exactly those.
 
 Mirrors functions/sensors/bulk_sync_worker.py; the only differences are the
-table, the natural key (tboxCode) and that Dajin's tbox insert takes no version.
+table, the natural key (tboxCode) and that the platform's tbox insert takes no version.
 """
 import json
 import os
@@ -33,8 +33,8 @@ from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import resolve_or_create
 from shared.utils.clock import now_ms
 
-# Parallel Dajin calls. The client is thread-safe (module-level httpx calls, the
-# cached token is only read). Raise with care: Dajin is slow and rate-opaque.
+# Parallel platform calls. The client is thread-safe (module-level httpx calls, the
+# cached token is only read). Raise with care: the platform is slow and rate-opaque.
 CONCURRENCY = 4
 
 # Full retry passes over the failing remainder before giving up.
@@ -67,7 +67,7 @@ def _reinvoke(ids: list[int], pass_num: int, actor: str) -> bool:
 
 
 def _sync_one(st, row):
-    """Resolve one Qbox against Dajin. Returns (id, daijin_id | None, error)."""
+    """Resolve one Qbox against the platform. Returns (id, daijin_id | None, error)."""
     try:
         daijin_id = resolve_or_create(
             st,
@@ -119,7 +119,7 @@ def handler(event, context):
                 leftover_ids = [r["id"] for r in rows[i:]]
                 break
             chunk = rows[i:i + CONCURRENCY]
-            # Threads only talk to Dajin; every DB write happens here on the
+            # Threads only talk to the platform; every DB write happens here on the
             # main thread (the pymysql connection is not thread-safe).
             for rid, daijin_id, err in pool.map(lambda r: _sync_one(st, r), chunk):
                 if daijin_id is None:
@@ -150,7 +150,7 @@ def handler(event, context):
 
     if failed_ids and pass_num < MAX_PASSES:
         if resolved == 0:
-            # Zero progress this pass → Dajin is struggling; back off before retrying.
+            # Zero progress this pass → the platform is struggling; back off before retrying.
             time.sleep(min(60, 10 * pass_num))
         _reinvoke(failed_ids, pass_num + 1, actor)
         return {"status": "retrying", "resolved": resolved,

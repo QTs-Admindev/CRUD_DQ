@@ -226,7 +226,7 @@ functions:
           cors: true
 
   # Importación masiva de sensores (Excel en el FE). Inserta el lote local como
-  # 'registering' y delega TODO el tráfico a Dajin al worker asíncrono.
+  # 'registering' y delega TODO el tráfico a la plataforma al worker asíncrono.
   bulkCreateSensors:
     handler: functions/sensors/bulk_create.handler
     environment:
@@ -248,7 +248,7 @@ functions:
 
   # Importación masiva de Qboxes (TBox) desde Excel en el FE. Igual que el bulk de
   # sensores: inserta el lote local como 'registering' y delega TODO el tráfico a
-  # Dajin al worker asíncrono. Responde 202 al instante (fire-and-forget).
+  # la plataforma al worker asíncrono. Responde 202 al instante (fire-and-forget).
   bulkCreateTboxes:
     handler: functions/tboxes/bulk_create.handler
     environment:
@@ -278,7 +278,7 @@ functions:
     environment:
       BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-tboxesBulkSyncWorker
 
-  # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
+  # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en la plataforma.
   reconcile:
     handler: functions/reconciliation/reconcile.handler
     timeout: 120

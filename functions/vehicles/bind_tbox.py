@@ -44,7 +44,7 @@ def handler(event, context):
 
     is_tractor, model_id = _dajin_type(catalog)
 
-    # Dajin: vehicle/update reenvía los datos del vehículo + tboxId (daijin del tbox).
+    # La plataforma: vehicle/update reenvía los datos del vehículo + tboxId (daijin del tbox).
     try:
         st = SmartTyreClient()
         st.post("/smartyre/openapi/vehicle/update", {

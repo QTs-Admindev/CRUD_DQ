@@ -12,7 +12,7 @@ from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 from shared.utils.validators import validate_hex12
 
-# Default firmware version sent to Dajin (legacy default). Not stored locally.
+# Default firmware version sent to the platform (legacy default). Not stored locally.
 SENSOR_VERSION = "404"
 
 
@@ -91,7 +91,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (insert sensor): {e}")
 
-    # 3. Sync with Dajin (idempotent). Natural key = sensorCode.
+    # 3. Sync with the platform (idempotent). Natural key = sensorCode.
     try:
         st = SmartTyreClient()
         daijin_id = resolve_or_create(

@@ -33,7 +33,7 @@ class FakeSmartTyre:
     def get(self, path, params):
         code = params["sensorCode"]
         if code in self.failing:
-            raise ConnectionError("Dajin timeout")
+            raise ConnectionError("platform timeout")
         return {"records": [{"id": int(code[-1]) + 1000}]}
 
     def post(self, path, body):

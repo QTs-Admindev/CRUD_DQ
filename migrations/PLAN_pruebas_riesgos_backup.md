@@ -9,7 +9,7 @@
 1. **Prod-only ⇒ máxima cautela.** No hay dev; cada escritura a prod va con snapshot previo.
 2. **Aditivo y reversible primero.** `ADD COLUMN` nullable + backfill idempotente; lo destructivo (drop) va al final, con rename y período de gracia.
 3. **Coexistencia, no big-bang.** Viejo y nuevo conviven; el corte es gradual y reversible.
-4. **El match es recuperable.** El `tyreCode` en Dajin = id local ⇒ ante desastre se puede reconstruir el `daijin_id` desde la API.
+4. **El match es recuperable.** El `tyreCode` en la plataforma = id local ⇒ ante desastre se puede reconstruir el `daijin_id` desde la API.
 5. **Probar el código contra `test_` antes de cualquier deploy.**
 
 ---
@@ -39,7 +39,7 @@
 
 ### Amenazas (externas, riesgo)
 - **Prod vivo**: el sistema viejo sigue creando activos durante la transición ⇒ riesgo de desincronización.
-- Caída/timeout de Dajin durante pruebas o cutover.
+- Caída/timeout de la plataforma durante pruebas o cutover.
 - Romper el **frontend** vía BEGQL si un cambio sale mal.
 - **Error humano** en SQL ejecutado sobre tablas reales (no `test_`).
 
@@ -51,7 +51,7 @@
 |---|---|---|---|---|---|
 | R1 | Error humano: SQL destructivo sobre tabla real en vez de `test_` | Media | **Crítico** | Scripts revisados; prefijo `test_`; `WHERE` siempre; snapshot antes de cada fase | Restore de snapshot |
 | R2 | Desync: viejo crea activo y el nuevo no lo ve (o viceversa) | Alta | Medio | **Dual-write** durante transición + reconciliación diaria (`columna == mapping`) | Reconciliación rellena |
-| R3 | Dajin caído/timeout en cutover | Media | Bajo | Local-first ⇒ queda en `registering`; barrido drena al volver | Ninguno (auto-recupera) |
+| R3 | La plataforma caída/timeout en cutover | Media | Bajo | Local-first ⇒ queda en `registering`; barrido drena al volver | Ninguno (auto-recupera) |
 | R4 | Colisión nueva de `daijin_id` creada entre ensayo y migración | Baja | Medio | **Re-validar D4** justo antes de aplicar `UNIQUE` | `DROP INDEX` |
 | R5 | Backfill corre tarde; prod creó activos nuevos | Alta | Bajo | Backfill **idempotente**, re-ejecutar antes del cutover | Re-ejecutar |
 | R6 | Código nuevo escribe mal el `daijin_id` | Media | Alto | Pruebas exhaustivas contra `test_`; feature flag | No desplegar / flag off |
@@ -78,7 +78,7 @@
 - **Cobertura mínima:**
   - Create de los 4 activos (unit/tire/sensor/tbox) → escribe `daijin_id` + `status` correcto.
   - **Idempotencia**: GET-antes-de-POST no duplica al reintentar.
-  - **Fallo de Dajin** (mock): queda en `registering`, no rompe, no escribe basura.
+  - **Fallo de la plataforma** (mock): queda en `registering`, no rompe, no escribe basura.
   - **Reconciliación**: barrido completa los `registering` pendientes.
   - **Invariante**: nunca queda `active` con `daijin_id NULL`.
   - Binds/unbinds (relación vs identidad).
@@ -94,7 +94,7 @@
 1. **El viejo sigue vivo** (no lo apagamos) ⇒ el sistema sigue operando aunque el nuevo falle.
 2. **Restore del snapshot** previo ⇒ se vuelve al estado exacto anterior a la fase.
 3. **Las mapping siguen existiendo** (solo renombradas) ⇒ el `daijin_id` nunca se pierde.
-4. **Reconstrucción extrema**: si se perdiera el `daijin_id`, se relista en Dajin por `tyreCode` (= id local) y se rellena.
+4. **Reconstrucción extrema**: si se perdiera el `daijin_id`, se relista en la plataforma por `tyreCode` (= id local) y se rellena.
 5. **Cutover con feature flag**: poder volver al viejo sin redeploy.
 
 ---

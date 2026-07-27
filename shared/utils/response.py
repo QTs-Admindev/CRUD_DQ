@@ -24,7 +24,7 @@ def error(status_code: int, message) -> dict:
 
 
 def pending(data) -> dict:
-    """Activo creado localmente pero aún no confirmado en Dajin (status registering).
+    """Activo creado localmente pero aún no confirmado en la plataforma (status registering).
 
     No es un error: el barrido de reconciliación completará la sincronización.
     """
@@ -43,10 +43,10 @@ def pending(data) -> dict:
 
 
 def pending_delete(data, reason=None) -> dict:
-    """Borrado local hecho, pero la limpieza en Dajin quedó pendiente (Dajin no respondió).
+    """Borrado local hecho, pero la limpieza en la plataforma quedó pendiente (la plataforma no respondió).
 
     No es un error: el activo ya no aparece localmente (is_deleted=1) y el barrido de
-    reconciliación completará el borrado remoto cuando Dajin vuelva.
+    reconciliación completará el borrado remoto cuando la plataforma vuelva.
     """
     return {
         "statusCode": 202,

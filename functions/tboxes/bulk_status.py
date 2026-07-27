@@ -5,7 +5,7 @@ reports how many are already synced (`active`) vs still `registering`, so the
 front-end can fill a progress bar and notify when the batch is done — without
 holding the upload modal open (the sync runs in the background worker).
 
-Read-only, never touches Dajin. Body: { "ids": [int, ...] }.
+Read-only, never touches the platform. Body: { "ids": [int, ...] }.
 """
 import json
 
@@ -36,7 +36,7 @@ def handler(event, context):
         return error(500, f"DB error (bulk status tboxes): {e}")
 
     total = len(body.ids)
-    active = 0        # synced with Dajin -> done
+    active = 0        # synced with the platform -> done
     registering = 0   # still being synced by the worker
     for r in rows:
         if r.get("is_deleted"):

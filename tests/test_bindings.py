@@ -37,7 +37,7 @@ class FakeSmartTyre:
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         return None
 
@@ -52,7 +52,7 @@ def _wire(monkeypatch, module, store, db, st):
 def _seed():
     store = FakeStore()
     store.rows[1] = {"id": 1, "daijin_id": 33369, "status": "active"}  # unit
-    # tire: con daijin_id — los binds exigen la llanta ya sincronizada en Dajin
+    # tire: con daijin_id — los binds exigen la llanta ya sincronizada en la plataforma
     store.rows[10] = {"id": 10, "is_mounted": 0, "unit_id": None, "sensor_id": None,
                       "axle_index": None, "wheel_index": None, "daijin_id": 414997}
     store.rows[20] = {"id": 20, "sensorCode": "A4C13873C3E6"}  # sensor
@@ -74,7 +74,7 @@ def test_bind_tire_happy(monkeypatch):
     assert resp["statusCode"] == 200
     assert store.rows[10]["unit_id"] == 1
     assert store.rows[10]["is_mounted"] == 1
-    # a Dajin se manda el daijin del vehículo y el id local como tyreCode
+    # a la plataforma se manda el daijin del vehículo y el id local como tyreCode
     assert st.posts[0][1]["vehicleId"] == 33369
     assert st.posts[0][1]["tyreCode"] == "10"
 
@@ -88,7 +88,7 @@ def test_bind_tire_already_mounted_409(monkeypatch):
     assert st.posts == []
 
 
-def test_bind_tire_dajin_down_502(monkeypatch):
+def test_bind_tire_platform_down_502(monkeypatch):
     store, db, st = _seed(), FakeDB(), FakeSmartTyre(fail=True)
     _wire(monkeypatch, bind_tire, store, db, st)
     resp = bind_tire.handler(_ev(1, {"tire_id": 10, "axle_index": 2, "wheel_index": 4}), None)
