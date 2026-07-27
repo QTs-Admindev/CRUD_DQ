@@ -92,7 +92,7 @@ def test_delete_http_401_is_transient_and_resets_token(monkeypatch):
 
 
 def test_delete_body_code_401_also_resets_token(monkeypatch):
-    # Dajin puede devolver HTTP 200 con {"code":401} en el body.
+    # La plataforma puede devolver HTTP 200 con {"code":401} en el body.
     _wire(monkeypatch, FakeHttpx(FakeResp(200, {"code": 401, "msg": "expired"})))
     status, _ = attempt_delete("vehicle", "1", backoff=())
     assert status == TRANSIENT
@@ -164,7 +164,7 @@ def test_http_200_with_unknown_code_is_guard(monkeypatch):
 
 
 def test_code_900_already_gone_is_success(monkeypatch):
-    # Borrar algo ya borrado en Dajin -> {"code":900,"msg":"不存在该车辆"} = idempotente OK.
+    # Borrar algo ya borrado en la plataforma -> {"code":900,"msg":"不存在该车辆"} = idempotente OK.
     _wire(monkeypatch, FakeHttpx(FakeResp(200, {"code": 900, "msg": "不存在该车辆"})))
     assert attempt_delete("vehicle", "1", backoff=()) == (DONE, None)
 

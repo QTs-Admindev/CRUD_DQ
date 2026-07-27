@@ -1,9 +1,9 @@
-"""Cliente de la API INTERNA del portal Dajin (`basic-api`).
+"""Cliente de la API INTERNA del portal de la plataforma (`basic-api`).
 
 La OpenAPI oficial (ver `client.py`) NO expone delete para vehículo/llanta/sensor;
 la plataforma web sí, vía `basic-api`, autenticada con un **JWT de sesión** que se
 obtiene con usuario/contraseña (no con la firma OAuth). Este módulo se usa SOLO para
-complementar esos borrados. Cuando Dajin exponga el delete oficial en la OpenAPI,
+complementar esos borrados. Cuando la plataforma exponga el delete oficial en la OpenAPI,
 migrar a `client.py` y retirar este archivo.
 
 Auth: login por password -> JWT (~24h) cacheado en RAM por contenedor, con re-login
@@ -22,7 +22,7 @@ _token: str | None = None
 _token_expires_at: float = 0.0
 _login_lock = threading.Lock()
 
-_VERIFY_SSL = False           # dajintruck.com tiene el SSL roto (igual que client.py)
+_VERIFY_SSL = False           # el dominio de la plataforma tiene el SSL roto (igual que client.py)
 # Timeouts acotados: un connect corto hace que un portal inalcanzable falle rápido
 # (antes 20s colgaban el connect). El path síncrono debe volver muy por debajo del
 # límite del API Gateway (~29s) para no reventar en el navegador con ERR_FAILED.
@@ -34,13 +34,13 @@ _TOKEN_TTL = 23 * 3600        # el JWT dura ~24h; refrescamos con margen
 _STOP_RETRIES_AFTER = 6.0
 
 # Resultados de un intento de borrado remoto.
-DONE = "done"                 # Dajin confirmó el borrado
+DONE = "done"                 # la plataforma confirmó el borrado
 GUARD = "guard"               # rechazo de negocio (permanente): no reintentar
 TRANSIENT = "transient"       # fallo transitorio (red/5xx/login): reintentable
 
 DEFAULT_BACKOFF = (0.5, 1.5, 3.0)
 
-# Códigos/mensajes de Dajin que significan "el activo ya no existe": el borrado es
+# Códigos/mensajes de la plataforma que significan "el activo ya no existe": el borrado es
 # idempotente, así que lo tratamos como ÉXITO (no como rechazo). Visto: al borrar un
 # vehículo ya borrado devuelve {"code":900,"msg":"不存在该车辆"} ("no existe").
 _ALREADY_GONE_CODES = {900}
@@ -48,7 +48,7 @@ _ALREADY_GONE_MARK = "不存在"  # "no existe" (aparece en el msg de todos los 
 
 
 class BasicApiGuard(Exception):
-    """Dajin rechazó el borrado por una regla de negocio (ej. 'llanta con sensor').
+    """La plataforma rechazó el borrado por una regla de negocio (ej. 'llanta con sensor').
 
     Permanente: hay que resolver la causa (desvincular) antes de reintentar.
     """
@@ -104,7 +104,7 @@ class BasicApiClient:
     def delete(self, resource: str, daijin_id) -> bool:
         """DELETE /{resource}/delete/{daijin_id}. resource ∈ vehicle|tyre|sensor|tbox.
 
-        Devuelve True si Dajin confirma el borrado (code 200).
+        Devuelve True si la plataforma confirma el borrado (code 200).
         Lanza BasicApiGuard (rechazo permanente) o BasicApiTransient (reintentable).
         """
         token = self._login()
@@ -143,10 +143,10 @@ class BasicApiClient:
 
 
 def attempt_delete(resource: str, daijin_id, backoff=DEFAULT_BACKOFF):
-    """Borra en Dajin con reintentos ante fallos transitorios.
+    """Borra en la plataforma con reintentos ante fallos transitorios.
 
     Devuelve una tupla (status, msg):
-      (DONE, None)        Dajin confirmó el borrado.
+      (DONE, None)        la plataforma confirmó el borrado.
       (GUARD, msg)        rechazo permanente (no se reintenta; resolver la causa).
       (TRANSIENT, msg)    no se pudo tras los reintentos (dejar pending -> reconciliación).
     """

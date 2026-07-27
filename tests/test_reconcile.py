@@ -61,7 +61,7 @@ def test_guard_but_already_gone_is_cleared(monkeypatch):
     updates = _wire(
         monkeypatch,
         _make_get_where(dele={"sensors": [{"id": 3, "daijin_id": "7", "sensorCode": "AA"}]}),
-        find_id=lambda *a: None,                     # ya no existe en Dajin
+        find_id=lambda *a: None,                     # ya no existe en la plataforma
         attempt=lambda *a, **k: (reconcile.GUARD, "not found"),
     )
     out = reconcile.handler({}, None)
@@ -95,9 +95,9 @@ def test_transient_delete_left_for_next_run(monkeypatch):
     assert updates == []                             # daijin_id intacto -> se reintenta
 
 
-# ---------- registering aún no visible en Dajin: se salta sin tocar ----------
+# ---------- registering aún no visible en la plataforma: se salta sin tocar ----------
 
-def test_registering_not_yet_in_dajin_is_skipped(monkeypatch):
+def test_registering_not_yet_in_platform_is_skipped(monkeypatch):
     updates = _wire(
         monkeypatch,
         _make_get_where(reg={"sensors": [{"id": 5, "sensorCode": "AA"}]}),

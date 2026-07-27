@@ -61,12 +61,12 @@ class FakeSmartTyre:
 
     def get(self, path, params):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         return {"records": self._after if self.created else self._existing}
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         self.created = True
         return "Success"
@@ -108,11 +108,11 @@ def test_happy_path_creates_and_activates(wire):
     data = _body(resp)
     assert str(data["daijin_id"]) == "275771"
     assert data["status"] == "active"
-    assert len(st.posts) == 1  # se creó en Dajin
+    assert len(st.posts) == 1  # se creó en la plataforma
 
 
-def test_idempotent_when_already_in_dajin(wire):
-    # Dajin ya tiene el sensor -> se recupera el id, NO se recrea.
+def test_idempotent_when_already_in_platform(wire):
+    # La plataforma ya tiene el sensor -> se recupera el id, NO se recrea.
     st = FakeSmartTyre(existing=[{"id": 999}])
     store, db = wire(st)
 
@@ -134,10 +134,10 @@ def test_already_synced_locally_returns_ok(wire):
     resp = mod.handler(_event(), None)
 
     assert resp["statusCode"] == 200
-    assert st.posts == []  # ni siquiera habla con Dajin
+    assert st.posts == []  # ni siquiera habla con la plataforma
 
 
-def test_dajin_down_returns_pending_and_stays_registering(wire):
+def test_platform_down_returns_pending_and_stays_registering(wire):
     st = FakeSmartTyre(fail=True)
     store, db = wire(st)
 

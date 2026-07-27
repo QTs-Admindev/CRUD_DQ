@@ -384,7 +384,7 @@ smarttyre\_id = resp\["records"]\[0]\["id"]  # ← así se obtiene
 
 |---|---|---|
 
-| `DCredentials` | JSON String | `{"BASE_URL":"...","CLIENT_ID":"...","CLIENT_SECRET":"...","SIGN_KEY":"..."}` — credenciales de SmartTyre/Dajin |
+| `DCredentials` | JSON String | `{"BASE_URL":"...","CLIENT_ID":"...","CLIENT_SECRET":"...","SIGN_KEY":"..."}` — credenciales de SmartTyre/la plataforma |
 
 | `MYSQL\_URI` | JSON String | `{"MYSQL_URI":"mysql+mysqlconnector://user:pass@host:3306/db"}` — URI estilo SQLAlchemy (PyMySQL usa solo los componentes) |
 

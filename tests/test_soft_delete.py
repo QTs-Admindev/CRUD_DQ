@@ -52,7 +52,7 @@ class FakeSmartTyre:
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         return None
 
@@ -85,8 +85,8 @@ def _ev(rid):
     return {"pathParameters": {"id": str(rid)}}
 
 
-# --- happy path: Dajin confirma -> soft-delete + limpia daijin_id (200) ---
-def test_vehicle_delete_dajin_ok(monkeypatch):
+# --- happy path: la plataforma confirma -> soft-delete + limpia daijin_id (200) ---
+def test_vehicle_delete_platform_ok(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
@@ -97,7 +97,7 @@ def test_vehicle_delete_dajin_ok(monkeypatch):
     assert remote.calls == [("vehicle", "33")]
 
 
-# --- sin daijin_id: nunca sincronizó -> solo local, no llama a Dajin ---
+# --- sin daijin_id: nunca sincronizó -> solo local, no llama a la plataforma ---
 def test_vehicle_delete_without_daijin_skips_remote(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": None}})
     remote = FakeRemote((DONE, None))
@@ -105,11 +105,11 @@ def test_vehicle_delete_without_daijin_skips_remote(monkeypatch):
     resp = vdel.handler(_ev(1), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["is_deleted"] == 1
-    assert remote.calls == []                          # no se tocó Dajin
+    assert remote.calls == []                          # no se tocó la plataforma
 
 
-# --- guard de Dajin (ej. 531): 409 y NO se toca local ---
-def test_vehicle_delete_dajin_guard_aborts(monkeypatch):
+# --- guard de la plataforma (ej. 531): 409 y NO se toca local ---
+def test_vehicle_delete_platform_guard_aborts(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((GUARD, "轮胎已绑定传感器"))
     _wire(monkeypatch, vdel, store, remote)
@@ -119,7 +119,7 @@ def test_vehicle_delete_dajin_guard_aborts(monkeypatch):
     assert store.soft_deleted == [] and store.updated == []
 
 
-# --- transitorio: Dajin no responde -> soft-delete local + 202, conserva daijin_id ---
+# --- transitorio: la plataforma no responde -> soft-delete local + 202, conserva daijin_id ---
 def test_vehicle_delete_transient_pending(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((TRANSIENT, "timeout"))
@@ -167,7 +167,7 @@ def test_already_deleted_is_idempotent(monkeypatch):
     assert remote.calls == []
 
 
-def test_tire_delete_dajin_ok(monkeypatch):
+def test_tire_delete_platform_ok(monkeypatch):
     store = FakeStore({5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": None,
                            "daijin_id": "77"}})
     remote = FakeRemote((DONE, None))
@@ -195,9 +195,9 @@ def test_tire_delete_unmounts_from_vehicle_first(monkeypatch):
     assert remote.calls == [("tyre", "77")]
 
 
-def test_tire_delete_stored_with_sensor_frees_it_even_if_dajin_rejects(monkeypatch):
+def test_tire_delete_stored_with_sensor_frees_it_even_if_platform_rejects(monkeypatch):
     # Regla de negocio: una llanta puede almacenarse CON su sensor. Al borrarla,
-    # el unbind remoto no tiene contexto de vehículo y Dajin lo rechaza — eso no
+    # el unbind remoto no tiene contexto de vehículo y la plataforma lo rechaza — eso no
     # debe bloquear: el sensor se libera localmente y el borrado continúa.
     store = FakeStore({
         5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": 9,
@@ -247,9 +247,9 @@ def test_tire_delete_frees_sensor_first(monkeypatch):
     assert remote.calls == [("tyre", "77")]
 
 
-# ---------- sensor y tbox: mismo contrato Dajin-first ----------
+# ---------- sensor y tbox: mismo contrato la plataforma primero ----------
 
-def test_sensor_delete_dajin_ok(monkeypatch):
+def test_sensor_delete_platform_ok(monkeypatch):
     store = FakeStore({3: {"id": 3, "is_deleted": 0, "daijin_id": "280080"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, sdel, store, remote)
@@ -277,7 +277,7 @@ def test_sensor_delete_transient_pending(monkeypatch):
     assert store.rows[3]["daijin_id"] == "280080"      # conservado para reconciliación
 
 
-def test_tbox_delete_dajin_ok(monkeypatch):
+def test_tbox_delete_platform_ok(monkeypatch):
     store = FakeStore({7: {"id": 7, "is_deleted": 0, "daijin_id": "34616"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, bdel, store, remote)
@@ -324,7 +324,7 @@ def test_missing_path_parameters_returns_400(monkeypatch):
 
 def test_already_deleted_with_pending_daijin_does_not_retry_inline(monkeypatch):
     # Quedó is_deleted=1 con daijin_id (pendiente): el DELETE repetido responde 200
-    # sin volver a llamar a Dajin — la reconciliación es la dueña del reintento.
+    # sin volver a llamar a la plataforma — la reconciliación es la dueña del reintento.
     store = FakeStore({1: {"id": 1, "is_deleted": 1, "daijin_id": "33"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
@@ -333,10 +333,10 @@ def test_already_deleted_with_pending_daijin_does_not_retry_inline(monkeypatch):
     assert remote.calls == []
 
 
-# ---------- error de BD tras Dajin OK ----------
+# ---------- error de BD tras la plataforma OK ----------
 
-def test_db_error_after_dajin_ok_returns_500_with_daijin_id(monkeypatch):
-    # Dajin ya borró pero el update local falla: 500 y el mensaje DEBE incluir el
+def test_db_error_after_platform_ok_returns_500_with_daijin_id(monkeypatch):
+    # La plataforma ya borró pero el update local falla: 500 y el mensaje DEBE incluir el
     # daijin_id para el rescate manual (regla del proyecto).
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
 

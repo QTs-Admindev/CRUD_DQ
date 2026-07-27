@@ -8,7 +8,7 @@ from shared.utils.response import error, ok, pending_delete
 
 
 def handler(event, context):
-    # DELETE /sensors/{id} -> Dajin-first: borra en Dajin (basic-api) y luego soft-delete local.
+    # DELETE /sensors/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
@@ -24,7 +24,7 @@ def handler(event, context):
     if exists(db, t("tires"), {"sensor_id": rid, "is_deleted": 0}):
         return error(409, "El sensor está vinculado a una llanta; desvincúlalo primero")
 
-    # Dajin-first: intentar el borrado remoto antes de tocar local.
+    # La plataforma primero: intentar el borrado remoto antes de tocar local.
     daijin_id = rec.get("daijin_id")
     if daijin_id:
         status, msg = attempt_delete("sensor", str(daijin_id))

@@ -11,7 +11,7 @@ from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 
-# Defaults que el sistema viejo manda a Dajin (no hay mapping tires_catalog -> Dajin).
+# Defaults que el sistema viejo manda a la plataforma (no hay mapping tires_catalog -> la plataforma).
 TYRE_BRAND_ID = "1"
 TYRE_SIZE_ID = "121"
 TYRE_PATTERN = "FS591"
@@ -117,7 +117,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (insert tire): {e}")
 
-    # 3. Sync con Dajin. Natural key = id local (tyreCode) -> assume_new (no preexiste).
+    # 3. Sync con la plataforma. Natural key = id local (tyreCode) -> assume_new (no preexiste).
     try:
         st = SmartTyreClient()
         daijin_id = resolve_or_create(

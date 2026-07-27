@@ -88,7 +88,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (insert tbox): {e}")
 
-    # 3. Sync with Dajin (idempotent). Natural key = tboxCode (external hardware code).
+    # 3. Sync with the platform (idempotent). Natural key = tboxCode (external hardware code).
     try:
         st = SmartTyreClient()
         daijin_id = resolve_or_create(

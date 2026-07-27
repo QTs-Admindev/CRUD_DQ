@@ -17,7 +17,7 @@ def _lifecycle(rec: dict) -> str:
 
     registering: creado local, aún sin daijin_id (sync pendiente -> 202 del create).
     active:      sincronizado (tiene daijin_id) y vivo.
-    deleting:    borrado local pero aún en Dajin (limpieza remota pendiente -> 202 del delete).
+    deleting:    borrado local pero aún en la plataforma (limpieza remota pendiente -> 202 del delete).
     deleted:     borrado en ambos lados.
     """
     if rec.get("is_deleted"):

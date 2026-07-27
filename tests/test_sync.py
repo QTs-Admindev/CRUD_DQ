@@ -16,12 +16,12 @@ class FakeST:
 
     def get(self, path, params):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         return {"records": self._after if self.created else self._existing}
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         self.created = True
         return "Success"
@@ -39,7 +39,7 @@ def _call(st, backoff=()):
 
 
 def test_returns_existing_without_creating():
-    # Idempotencia: si ya existe en Dajin, NO se vuelve a crear.
+    # Idempotencia: si ya existe en la plataforma, NO se vuelve a crear.
     st = FakeST(existing=[{"id": 42}])
     assert _call(st) == 42
     assert st.posts == []

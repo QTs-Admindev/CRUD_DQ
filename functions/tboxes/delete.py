@@ -8,7 +8,7 @@ from shared.utils.response import error, ok, pending_delete
 
 
 def handler(event, context):
-    # DELETE /tboxes/{id} -> Dajin-first: borra en Dajin (basic-api) y luego soft-delete local.
+    # DELETE /tboxes/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
     # Nota: el TBox SÍ tiene delete OFICIAL en la OpenAPI (`tbox/delete`). Aquí se usa la
     # basic-api por uniformidad con los otros 3; migrar a la vía oficial cuando se cablee.
     try:
@@ -26,7 +26,7 @@ def handler(event, context):
     if exists(db, t("units"), {"tbox_id": rid, "is_deleted": 0}):
         return error(409, "El tbox está asignado a una unidad; quítalo primero")
 
-    # Dajin-first: intentar el borrado remoto antes de tocar local.
+    # La plataforma primero: intentar el borrado remoto antes de tocar local.
     daijin_id = rec.get("daijin_id")
     if daijin_id:
         status, msg = attempt_delete("tbox", str(daijin_id))

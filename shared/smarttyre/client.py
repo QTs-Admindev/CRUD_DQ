@@ -10,16 +10,16 @@ from shared.smarttyre.sign import compute_sign
 _token: str | None = None
 _token_expires_at: float = 0
 
-# dajintruck.com tiene un certificado SSL roto; el sistema legacy también va con
+# el dominio de la plataforma tiene un certificado SSL roto; el sistema legacy también va con
 # verify=False. Necesario para conectar.
 _VERIFY_SSL = False
 _TIMEOUT = 20
 
 
 class SmartTyreError(Exception):
-    """Business-level rejection from Dajin (HTTP 200 but code != 200).
+    """Business-level rejection from the platform (HTTP 200 but code != 200).
 
-    Dajin wraps every response in {"code": 200, "msg": "Success", "data": ...}.
+    The platform wraps every response in {"code": 200, "msg": "Success", "data": ...}.
     A non-200 code means the operation was refused even though the HTTP call
     succeeded (e.g. an invalid bind, or an asset that does not exist upstream).
     Without this, such failures were silently swallowed and only the local DB
@@ -86,12 +86,12 @@ class SmartTyreClient:
         data = resp.json().get("data") or {}
         _token = data.get("accessToken")
         if not _token:
-            raise RuntimeError(f"Dajin auth sin accessToken: {resp.text[:200]}")
+            raise RuntimeError(f"auth de la plataforma sin accessToken: {resp.text[:200]}")
         _token_expires_at = time.time() + 3500
         return _token
 
     def post(self, path: str, data: dict):
-        # Dajin wraps the response in {"code":200,"msg":"Success","data":...}.
+        # The platform wraps the response in {"code":200,"msg":"Success","data":...}.
         # _unwrap validates the business code (not just HTTP) and returns .data.
         body_str = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
         headers = self._headers(body_str=body_str)

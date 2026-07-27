@@ -1,13 +1,13 @@
-"""Lambda de reconciliación (cron). Cierra lo que quedó a medias con Dajin.
+"""Lambda de reconciliación (cron). Cierra lo que quedó a medias con la plataforma.
 
 Dos barridos idempotentes sobre los 4 activos:
 
   A. CREATES pendientes  (status = 'registering')
-     El create escribió local pero no confirmó el daijin_id (Dajin no respondió a
+     El create escribió local pero no confirmó el daijin_id (la plataforma no respondió a
      tiempo). Se re-resuelve el id por la llave natural vía la OpenAPI y se activa.
 
   B. BORRADOS pendientes  (is_deleted = 1 AND daijin_id IS NOT NULL)
-     El delete marcó local pero no pudo borrar en Dajin (fallo transitorio). Se
+     El delete marcó local pero no pudo borrar en la plataforma (fallo transitorio). Se
      reintenta el borrado remoto vía basic-api; al confirmar se limpia el daijin_id.
 
 Es best-effort y acotado (LIMIT por barrido): si algo falla, se retoma en la
@@ -67,7 +67,7 @@ def _sweep_registering(db, st, table, cfg, summary):
         try:
             found = _find_id(st, cfg["list_path"], cfg["key"](r))
             if found is None:
-                continue  # aún no aparece en Dajin; se reintenta la próxima corrida
+                continue  # aún no aparece en la plataforma; se reintenta la próxima corrida
             update(db, table, r["id"], {
                 "daijin_id": found, "status": cfg["active"], "updated_at": now_ms(),
             })
@@ -79,7 +79,7 @@ def _sweep_registering(db, st, table, cfg, summary):
 
 
 def _sweep_pending_deletes(db, st, table, cfg, summary):
-    """B. Reintenta el borrado en Dajin de los que quedaron is_deleted=1 con daijin_id."""
+    """B. Reintenta el borrado en la plataforma de los que quedaron is_deleted=1 con daijin_id."""
     rows = get_where(db, table, "is_deleted = 1 AND daijin_id IS NOT NULL", [], BATCH)
     for r in rows:
         try:
@@ -90,7 +90,7 @@ def _sweep_pending_deletes(db, st, table, cfg, summary):
             elif status == GUARD:
                 # ¿"ya no existe" (idempotente) o un guard real (ej. 531 con sensor)?
                 if _find_id(st, cfg["list_path"], cfg["key"](r)) is None:
-                    _clear_daijin(db, table, r["id"])  # ya estaba borrado en Dajin
+                    _clear_daijin(db, table, r["id"])  # ya estaba borrado en la plataforma
                     summary["deleted"] += 1
                 else:
                     summary["guard_blocked"] += 1  # necesita acción manual (desvincular)

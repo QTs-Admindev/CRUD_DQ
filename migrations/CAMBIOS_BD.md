@@ -26,7 +26,7 @@
 
 ## Cambio 1 — Columna `daijin_id`
 
-Reemplaza las tablas `*_id_mapping` guardando el ID de Dajin como columna directa.
+Reemplaza las tablas `*_id_mapping` guardando el ID de la plataforma como columna directa.
 
 ```sql
 ALTER TABLE units   ADD COLUMN daijin_id VARCHAR(50) NULL AFTER company_id;
@@ -34,7 +34,7 @@ ALTER TABLE tires   ADD COLUMN daijin_id VARCHAR(50) NULL AFTER company_id;
 ALTER TABLE sensors ADD COLUMN daijin_id VARCHAR(50) NULL AFTER company_id;
 ALTER TABLE tboxes  ADD COLUMN daijin_id VARCHAR(50) NULL AFTER company_id;
 ```
-- **Tipo:** `VARCHAR(50)` (Dajin lo maneja como string; ej. `"33521"`).
+- **Tipo:** `VARCHAR(50)` (la plataforma lo maneja como string; ej. `"33521"`).
 - **NULL** permitido: un activo en `registering` aún no tiene `daijin_id`.
 
 ## Cambio 2 — Backfill desde las tablas de mapping
@@ -66,7 +66,7 @@ Log de auditoría append-only (quién/qué/cómo/resultado). Reemplaza a
 
 ## Cambio 5 — Columna `is_deleted` (soft delete)
 
-En vez de borrar filas, se marca `is_deleted=1`; en Dajin sí se borra de verdad.
+En vez de borrar filas, se marca `is_deleted=1`; en la plataforma sí se borra de verdad.
 Conserva el registro + `daijin_id` para historial/trazabilidad.
 
 ```sql
@@ -79,7 +79,7 @@ ALTER TABLE tboxes  ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0;
 - **Implicaciones en el código (pendientes de implementar):**
   - Las lecturas/listas deben filtrar `WHERE is_deleted = 0` (no mostrar borrados).
   - La idempotencia de creación debe considerar `is_deleted`.
-  - Endpoint de borrado: `DELETE /...` → Dajin delete + `UPDATE ... SET is_deleted=1`.
+  - Endpoint de borrado: `DELETE /...` → delete en la plataforma + `UPDATE ... SET is_deleted=1`.
 
 ## Cambio 6 — (Futuro) Retirar tablas `*_id_mapping`
 

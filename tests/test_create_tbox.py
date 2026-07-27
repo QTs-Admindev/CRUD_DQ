@@ -59,12 +59,12 @@ class FakeSmartTyre:
 
     def get(self, path, params):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         return {"records": self._after if self.created else self._existing}
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         self.created = True
         return "Success"
@@ -109,7 +109,7 @@ def test_happy_path_creates_and_activates(wire):
     assert len(st.posts) == 1
 
 
-def test_idempotent_when_already_in_dajin(wire):
+def test_idempotent_when_already_in_platform(wire):
     st = FakeSmartTyre(existing=[{"id": 888}])
     store, db = wire(st)
 
@@ -120,7 +120,7 @@ def test_idempotent_when_already_in_dajin(wire):
     assert st.posts == []
 
 
-def test_dajin_down_returns_pending(wire):
+def test_platform_down_returns_pending(wire):
     st = FakeSmartTyre(fail=True)
     store, db = wire(st)
 

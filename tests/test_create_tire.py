@@ -59,12 +59,12 @@ class FakeSmartTyre:
 
     def get(self, path, params):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         return {"records": self._after if self.created else []}
 
     def post(self, path, body):
         if self.fail:
-            raise ConnectionError("Dajin down")
+            raise ConnectionError("platform down")
         self.posts.append((path, body))
         self.created = True
         return "Success"
@@ -109,7 +109,7 @@ def test_happy_path_creates_and_activates(wire):
     assert str(data["daijin_id"]) == "414997"
     assert data["status"] == "new"  # status de negocio por defecto
     assert len(st.posts) == 1
-    # tyreCode enviado a Dajin = id local
+    # tyreCode enviado a la plataforma = id local
     assert st.posts[0][1]["tyreCode"] == str(data["id"])
 
 
@@ -128,10 +128,10 @@ def test_already_synced_locally_returns_ok(wire):
                      "daijin_id": 414997, "status": "new"}
     resp = mod.handler(_event(), None)
     assert resp["statusCode"] == 200
-    assert st.posts == []  # ni habla con Dajin
+    assert st.posts == []  # ni habla con la plataforma
 
 
-def test_dajin_down_returns_pending(wire):
+def test_platform_down_returns_pending(wire):
     st = FakeSmartTyre(fail=True)
     store, db = wire(st)
     resp = mod.handler(_event(), None)

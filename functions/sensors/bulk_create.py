@@ -1,7 +1,7 @@
 """Bulk sensor import: POST /sensors/bulk.
 
 Local-first, same contract as the single create but for whole shipments (2000+
-codes from an Excel file). This handler NEVER talks to Dajin — it only:
+codes from an Excel file). This handler NEVER talks to the platform — it only:
 
   1. Validates/normalizes the codes (hex-12) and drops in-file duplicates.
   2. Classifies against the local table:
@@ -12,7 +12,7 @@ codes from an Excel file). This handler NEVER talks to Dajin — it only:
                                   create does; the code is then inserted fresh
        - unknown               -> inserted as `registering`
   3. Fires the async sync worker (Event invocation) with the queued ids and
-     returns 202 immediately. The worker owns all Dajin traffic.
+     returns 202 immediately. The worker owns all the platform traffic.
 
 Everything is idempotent: re-posting the same file re-queues whatever is still
 `registering` and skips the rest, so a failed/partial import is retried by
@@ -135,7 +135,7 @@ def handler(event, context):
         db.rollback()
         return error(500, f"DB error (bulk insert sensors): {e}")
 
-    # 6. Launch the async worker that syncs the batch against Dajin
+    # 6. Launch the async worker that syncs the batch against the platform
     actor = actor_from(event)
     worker_started = _invoke_worker(queued_ids, actor)
 
