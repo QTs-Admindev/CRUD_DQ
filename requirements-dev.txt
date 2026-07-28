@@ -2,3 +2,4 @@
 boto3>=1.26
 pytest>=7.0
 pytest-mock>=3.0
+pyyaml>=6.0  # verifica el cableado del autorizador en serverless.yml

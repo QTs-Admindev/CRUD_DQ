@@ -4,23 +4,22 @@ Best-effort: writing the audit row must NEVER break the operation it records.
 Call `audit(...)` AFTER the main work is committed — it runs its own insert+commit
 on a clean transaction and swallows any error.
 
-The `actor` (who did it) comes from the `X-Actor` header the FE sends (the Cognito
-email). Falls back to "system" (e.g. the reconciliation cron, or a missing header).
+The `actor` (who did it) comes from the VERIFIED Cognito claims that API Gateway
+puts in `event.requestContext.authorizer.claims`. It used to come from the
+`X-Actor` header, which the client wrote itself: anyone could attribute any
+action to anyone, which makes an audit trail worthless as evidence.
+
+Falls back to "system" only for non-HTTP invocations (the reconciliation cron,
+the bulk sync worker), which carry no requestContext at all.
 """
 import json
 
+from shared.auth import actor_from  # noqa: F401  (re-exported: callers import it from here)
 from shared.db.ops import insert
 from shared.utils.clock import now_ms
 
 # asset_audit_log is a real (non-prefixed) log table shared across environments.
 _TABLE = "asset_audit_log"
-
-
-def actor_from(event) -> str:
-    """Return the actor email from the X-Actor header, or 'system' if absent."""
-    headers = (event or {}).get("headers") or {}
-    val = headers.get("X-Actor") or headers.get("x-actor") or ""
-    return val.strip() or "system"
 
 
 def audit(db, event=None, context=None, *, action, asset_type, actor=None,

@@ -1,4 +1,5 @@
-from shared.config import ADMIN_COMPANY_ID, t
+from shared.auth import AuthError, resolve_company_scope
+from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_many
 from shared.utils.response import error, ok
@@ -67,14 +68,30 @@ def handler(event, context):
     filters = {}
     if cfg["soft"]:
         filters["is_deleted"] = 0  # soft-deleted rows are never listed
-    if cfg["by_company"] and qs.get("company_id"):
+    if cfg["by_company"]:
+        # The tenant comes from the verified token. It used to come from the
+        # query string, where `?company_id=2` (ADMIN_COMPANY_ID) disabled the
+        # filter entirely: anyone who knew the number read the whole fleet.
+        requested = None
+        if qs.get("company_id"):
+            try:
+                requested = int(qs["company_id"])
+            except ValueError:
+                return error(422, "company_id must be an integer")
         try:
-            company_id = int(qs["company_id"])
-        except ValueError:
-            return error(422, "company_id must be an integer")
-        # Admin company sees everything (incl. unassigned inventory); others only their own.
-        if company_id != ADMIN_COMPANY_ID:
-            filters["company_id"] = company_id
+            # Admins may narrow with the parameter or omit it to see everything,
+            # including unassigned inventory. Regular users are pinned.
+            company_scope = resolve_company_scope(event, requested)
+        except AuthError as e:
+            return error(e.status, str(e))
+        if company_scope is not None:
+            filters["company_id"] = company_scope
+    else:
+        # Catalogues are shared reference data, but still need an identity.
+        try:
+            resolve_company_scope(event)
+        except AuthError as e:
+            return error(e.status, str(e))
 
     limit = DEFAULT_LIMIT
     if qs.get("limit"):

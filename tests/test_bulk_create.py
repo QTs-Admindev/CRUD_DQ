@@ -3,6 +3,7 @@ import json
 import pytest
 
 from functions.sensors import bulk_create as mod
+from tests.conftest import as_admin
 
 
 class FakeDB:
@@ -64,11 +65,12 @@ def wire(monkeypatch):
     return setup
 
 
-def _event(codes, company=100):
-    return {
-        "body": json.dumps({"sensor_codes": codes, "company_id": company}),
-        "headers": {"X-Actor": "cesar@quinta.tech"},
-    }
+def _event(codes, company=100, actor="cesar@quinta.tech"):
+    # El actor sale de las claims VERIFICADAS del token, ya no de la cabecera
+    # X-Actor que el propio cliente se autodeclaraba.
+    ev = {"body": json.dumps({"sensor_codes": codes, "company_id": company})}
+    ev.update(as_admin(email=actor))
+    return ev
 
 
 def _body(resp):
