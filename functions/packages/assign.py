@@ -28,6 +28,30 @@ def _record(resp: dict) -> dict:
     return data.get("data", data) if isinstance(data, dict) else data
 
 
+# Fila centinela del catálogo genérico: la MISMA que el FE usa para "llanta
+# genérica" (checkbox Desconocida). Resolverla por convención evita depender de
+# un env var y elimina el drift FE<->backend. (brand, model, size, position)
+_GENERIC_SENTINEL = ("Desconocida", "DESCONOCIDA", "DESCONOCIDA", "ALL")
+
+
+def _resolve_generic_catalog_id(db):
+    """Id de la fila genérica de tires_catalog.
+
+    1) Si GENERIC_TIRES_CATALOG_ID viene en el entorno, se respeta (override).
+    2) Si no, se busca por la convención centinela que ya usa el FE.
+    Devuelve int, o None si no existe ninguna.
+    """
+    override = os.environ.get("GENERIC_TIRES_CATALOG_ID")
+    if override:
+        return int(override)
+    brand, model, size, position = _GENERIC_SENTINEL
+    rows = get_where(
+        db, "tires_catalog",
+        "brand = %s AND model = %s AND size = %s AND position = %s",
+        [brand, model, size, position], 1)
+    return rows[0]["id"] if rows else None
+
+
 def handler(event, context):
     # POST /packages/{id}/assign -> monta el paquete en una unidad real: por cada
     # posición del layout reutiliza la llanta ya montada o crea una genérica, ata
@@ -68,7 +92,7 @@ def handler(event, context):
     if len(sensors) < len(slots):
         return error(422, f"El paquete tiene {len(sensors)} sensores; el layout requiere {len(slots)}")
 
-    generic_catalog = os.environ.get("GENERIC_TIRES_CATALOG_ID")
+    generic_catalog = _resolve_generic_catalog_id(db)
     company_id = unit.get("company_id")
     headers = (event or {}).get("headers") or {}
 
@@ -84,7 +108,9 @@ def handler(event, context):
             tire = live[0]
         else:
             if not generic_catalog:
-                return error(500, "GENERIC_TIRES_CATALOG_ID no configurado")
+                return error(500, "No hay catálogo genérico: falta la fila centinela "
+                                  "(Desconocida/DESCONOCIDA/ALL) en tires_catalog, o define "
+                                  "GENERIC_TIRES_CATALOG_ID")
             cresp = tire_create_handler(
                 {"body": json.dumps({
                     "prefix": "PKG",

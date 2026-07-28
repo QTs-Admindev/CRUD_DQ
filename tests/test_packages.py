@@ -296,3 +296,34 @@ def test_assign_rejects_catalog_mismatch(monkeypatch):
     resp = passign.handler(_assign_event(1, 1), None)
     assert resp["statusCode"] == 422
     assert calls["tire_create"] == 0
+
+
+def test_assign_resolves_generic_by_convention_when_no_env(monkeypatch):
+    # Sin GENERIC_TIRES_CATALOG_ID, la genérica se resuelve por la fila centinela
+    # (Desconocida/DESCONOCIDA/ALL) del catálogo, igual que el FE.
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # unidad vacía -> se crean las 2 llantas genéricas
+    store.seed("tires_catalog", {"id": 555, "brand": "Desconocida",
+                                 "model": "DESCONOCIDA", "size": "DESCONOCIDA", "position": "ALL"})
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+    monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)  # forzar la convención
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 200
+    assert calls["tire_create"] == 2
+    created = list(store.tables["tires"].values())
+    assert created and all(r["tires_catalog_id"] == 555 for r in created)
+
+
+def test_assign_500_when_no_generic_and_no_env(monkeypatch):
+    # Ni fila centinela ni env -> 500 claro (no se crea nada).
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # unidad vacía, sin tires_catalog centinela
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+    monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 500
+    assert calls["tire_create"] == 0
