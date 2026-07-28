@@ -119,10 +119,14 @@ def handler(event, context):
         else:
             pkg = get_by_id(db, t("packages"), package_id)
 
-        # 9. Sellar package_id en los miembros (tbox + sensores).
+        # 9. Sellar package_id en los miembros (tbox + sensores). El sensor i-ésimo
+        #    (en el orden en que llegaron los códigos = orden de posición del FE)
+        #    guarda su mount_position 1-based, para que el assign mapee sensor->
+        #    posición de forma determinista y no dependa del orden de id.
         update(db, t("tboxes"), tbox_id, {"package_id": package_id, "updated_at": now_ms()})
-        for sid in sensor_ids:
-            update(db, t("sensors"), sid, {"package_id": package_id, "updated_at": now_ms()})
+        for pos, sid in enumerate(sensor_ids, start=1):
+            update(db, t("sensors"), sid,
+                   {"package_id": package_id, "mount_position": pos, "updated_at": now_ms()})
         db.commit()
     except Exception as e:
         db.rollback()

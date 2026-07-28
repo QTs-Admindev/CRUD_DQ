@@ -28,6 +28,40 @@ def _record(resp: dict) -> dict:
     return data.get("data", data) if isinstance(data, dict) else data
 
 
+# Fila centinela del catálogo genérico: la MISMA que el FE usa para "llanta
+# genérica" (checkbox Desconocida). Resolverla por convención evita depender de
+# un env var y elimina el drift FE<->backend. (brand, model, size, position)
+_GENERIC_SENTINEL = ("Desconocida", "DESCONOCIDA", "DESCONOCIDA", "ALL")
+
+
+def _resolve_generic_catalog_id(db):
+    """Id de la fila genérica de tires_catalog.
+
+    1) Si GENERIC_TIRES_CATALOG_ID viene en el entorno, se respeta (override).
+    2) Si no, se busca por la convención centinela que ya usa el FE.
+    Devuelve int, o None si no existe ninguna.
+    """
+    override = os.environ.get("GENERIC_TIRES_CATALOG_ID")
+    if override:
+        return int(override)
+    brand, model, size, position = _GENERIC_SENTINEL
+    rows = get_where(
+        db, "tires_catalog",
+        "brand = %s AND model = %s AND size = %s AND position = %s",
+        [brand, model, size, position], 1)
+    return rows[0]["id"] if rows else None
+
+
+def _audit_partial(db, event, context, pkg, pid, company_id, stage, pos, done, total, reason=None):
+    """Deja rastro (audit result='pending') de un assign que quedó a medias: en qué
+    etapa/posición se detuvo y cuántas posiciones ya se montaron. Así el conciliador o
+    soporte lo pueden retomar y el paquete no queda a medias en silencio."""
+    audit(db, event, context, action="bind", asset_type="package", asset_id=pid,
+          natural_key=(pkg or {}).get("name"), company_id=company_id, result="pending",
+          payload={"stage": stage, "mount_position": pos, "done": done, "total": total,
+                   "reason": reason})
+
+
 def handler(event, context):
     # POST /packages/{id}/assign -> monta el paquete en una unidad real: por cada
     # posición del layout reutiliza la llanta ya montada o crea una genérica, ata
@@ -59,7 +93,7 @@ def handler(event, context):
         return error(422, "unit_catalog del paquete no encontrado")
     slots = tire_slots(catalog)
 
-    # Miembros del paquete (orden estable id ASC para mapear sensor[i] -> slot[i]).
+    # Miembros del paquete.
     tboxes = get_where(db, t("tboxes"), "package_id = %s", [pid], 1)
     if not tboxes:
         return error(409, "El paquete no tiene tbox")
@@ -68,9 +102,17 @@ def handler(event, context):
     if len(sensors) < len(slots):
         return error(422, f"El paquete tiene {len(sensors)} sensores; el layout requiere {len(slots)}")
 
-    generic_catalog = os.environ.get("GENERIC_TIRES_CATALOG_ID")
+    # Mapa sensor -> posición por el mount_position que el create selló (determinista,
+    # no depende del orden de id). Solo se usa si TODAS las posiciones del layout tienen
+    # un sensor; si no (paquetes viejos sin mount_position), se cae al orden id ASC.
+    by_position = {s.get("mount_position"): s for s in sensors if s.get("mount_position") is not None}
+    use_positions = all(slot["mount_position"] in by_position for slot in slots)
+
+    generic_catalog = _resolve_generic_catalog_id(db)
     company_id = unit.get("company_id")
     headers = (event or {}).get("headers") or {}
+    total = len(slots)
+    done = 0  # posiciones ya montadas por completo (llanta + sensor)
 
     for i, slot in enumerate(slots):
         pos = slot["mount_position"]
@@ -84,7 +126,11 @@ def handler(event, context):
             tire = live[0]
         else:
             if not generic_catalog:
-                return error(500, "GENERIC_TIRES_CATALOG_ID no configurado")
+                _audit_partial(db, event, context, pkg, pid, company_id, "tire", pos, done, total,
+                               "sin catálogo genérico")
+                return error(500, "No hay catálogo genérico: falta la fila centinela "
+                                  "(Desconocida/DESCONOCIDA/ALL) en tires_catalog, o define "
+                                  "GENERIC_TIRES_CATALOG_ID")
             cresp = tire_create_handler(
                 {"body": json.dumps({
                     "prefix": "PKG",
@@ -93,8 +139,13 @@ def handler(event, context):
                     "tires_catalog_id": int(generic_catalog),
                 }), "headers": headers}, context)
             if cresp["statusCode"] == 202:
-                return pending({"stage": "tire", "mount_position": pos, "reason": _record(cresp)})
+                _audit_partial(db, event, context, pkg, pid, company_id, "tire", pos, done, total,
+                               _record(cresp))
+                return pending({"stage": "tire", "mount_position": pos,
+                                "done": done, "total": total, "reason": _record(cresp)})
             if cresp["statusCode"] != 200:
+                _audit_partial(db, event, context, pkg, pid, company_id, "tire", pos, done, total,
+                               _record(cresp))
                 return cresp
             tire = _record(cresp)
         tire_id = tire["id"]
@@ -110,25 +161,34 @@ def handler(event, context):
                      "mount_position": pos,
                  }), "headers": headers}, context)
             if bresp["statusCode"] != 200:
+                _audit_partial(db, event, context, pkg, pid, company_id, "bind_tire", pos, done, total,
+                               _record(bresp))
                 return bresp
 
         # c) Atar el sensor de esta posición a la llanta (si no tiene ya uno).
         if not tire.get("sensor_id"):
+            sensor_for_slot = by_position[pos] if use_positions else sensors[i]
             sresp = bind_sensor_handler(
                 {"pathParameters": {"id": str(tire_id)},
                  "body": json.dumps({
-                     "sensor_id": sensors[i]["id"],
+                     "sensor_id": sensor_for_slot["id"],
                      "axle_index": slot["axle_index"],
                      "wheel_index": slot["wheel_index"],
                  }), "headers": headers}, context)
             if sresp["statusCode"] != 200:
+                _audit_partial(db, event, context, pkg, pid, company_id, "bind_sensor", pos, done, total,
+                               _record(sresp))
                 return sresp
+
+        done += 1  # esta posición quedó completa
 
     # d) Atar el tbox a la unidad.
     tresp = bind_tbox_handler(
         {"pathParameters": {"id": str(body.unit_id)},
          "body": json.dumps({"tbox_id": tbox["id"]}), "headers": headers}, context)
     if tresp["statusCode"] != 200:
+        _audit_partial(db, event, context, pkg, pid, company_id, "bind_tbox", None, done, total,
+                       _record(tresp))
         return tresp
 
     # e) Marcar el paquete como asignado.

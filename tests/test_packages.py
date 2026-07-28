@@ -6,6 +6,7 @@ import pytest
 from functions.packages import create as pcreate
 from functions.packages import move as pmove
 from functions.packages import assign as passign
+from functions.packages import unassign as punassign
 
 
 # --------------------------------------------------------------------------- #
@@ -59,6 +60,24 @@ class Store:
         elif "package_id" in where:
             pid = params[0]
             out = [dict(r) for r in rows if r.get("package_id") == pid]
+        elif "folio" in where:
+            # unassign: "unit_id=%s AND [sensor_id IS NOT NULL AND] folio [NOT] LIKE %s ..."
+            uid, pat = params[0], params[1]
+            prefix = str(pat).rstrip("%")
+            not_like = "NOT LIKE" in where
+            needs_sensor = "sensor_id IS NOT NULL" in where
+            out = []
+            for r in rows:
+                if r.get("unit_id") != uid or r.get("is_deleted"):
+                    continue
+                starts = str(r.get("folio") or "").startswith(prefix)
+                if not_like and starts:
+                    continue
+                if not not_like and not starts:
+                    continue
+                if needs_sensor and not r.get("sensor_id"):
+                    continue
+                out.append(dict(r))
         else:
             out = [dict(r) for r in rows]
         return out[:limit]
@@ -147,6 +166,8 @@ def test_create_happy_builds_prepared_package(monkeypatch):
     assert data["tbox"]["package_id"] == data["id"]
     assert len(data["sensors"]) == 6
     assert all(s["package_id"] == data["id"] for s in data["sensors"])
+    # cada sensor guarda su mount_position 1-based en el orden de captura (1..6)
+    assert [s["mount_position"] for s in data["sensors"]] == [1, 2, 3, 4, 5, 6]
 
 
 # --------------------------------------------------------------------------- #
@@ -296,3 +317,173 @@ def test_assign_rejects_catalog_mismatch(monkeypatch):
     resp = passign.handler(_assign_event(1, 1), None)
     assert resp["statusCode"] == 422
     assert calls["tire_create"] == 0
+
+
+def test_assign_resolves_generic_by_convention_when_no_env(monkeypatch):
+    # Sin GENERIC_TIRES_CATALOG_ID, la genérica se resuelve por la fila centinela
+    # (Desconocida/DESCONOCIDA/ALL) del catálogo, igual que el FE.
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # unidad vacía -> se crean las 2 llantas genéricas
+    store.seed("tires_catalog", {"id": 555, "brand": "Desconocida",
+                                 "model": "DESCONOCIDA", "size": "DESCONOCIDA", "position": "ALL"})
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+    monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)  # forzar la convención
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 200
+    assert calls["tire_create"] == 2
+    created = list(store.tables["tires"].values())
+    assert created and all(r["tires_catalog_id"] == 555 for r in created)
+
+
+def test_assign_500_when_no_generic_and_no_env(monkeypatch):
+    # Ni fila centinela ni env -> 500 claro (no se crea nada).
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # unidad vacía, sin tires_catalog centinela
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+    monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 500
+    assert calls["tire_create"] == 0
+
+
+def test_assign_maps_sensor_by_mount_position_not_id(monkeypatch):
+    # sensores con mount_position INVERTIDO respecto al id: id 20 -> pos 2, id 21 -> pos 1.
+    # El assign debe mapear sensor->posición por mount_position, no por orden de id.
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # unidad vacía, 2 posiciones
+    store.tables["sensors"][20]["mount_position"] = 2
+    store.tables["sensors"][21]["mount_position"] = 1
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+
+    bound = []
+
+    def capture_bind_sensor(event, context):
+        bound.append(json.loads(event["body"])["sensor_id"])
+        return _resp(200, {})
+
+    monkeypatch.setattr(passign, "bind_sensor_handler", capture_bind_sensor)
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 200
+    # posición 1 -> sensor con mount_position 1 (id 21); posición 2 -> mount_position 2 (id 20)
+    assert bound == [21, 20]
+
+
+# --------------------------------------------------------------------------- #
+#  unassign.py  (deshace el assign)                                            #
+# --------------------------------------------------------------------------- #
+def _seed_assigned(store):
+    store.seed("unit_catalog", {"id": 209, "axles_count": 1, "tires_axle_1": 2})
+    store.seed("packages", {"id": 1, "name": "kit", "unit_catalog_id": 209,
+                            "company_id": 5, "unit_id": 1, "status": "assigned"})
+    store.seed("units", {"id": 1, "unit_catalog_id": 209, "company_id": 5,
+                         "daijin_id": 33369, "tbox_id": 50})
+    store.seed("tboxes", {"id": 50, "tboxCode": "AA", "company_id": 5, "package_id": 1})
+    store.seed("sensors", {"id": 20, "sensorCode": "BB", "company_id": 5,
+                           "package_id": 1, "mount_position": 1})
+    store.seed("sensors", {"id": 21, "sensorCode": "CC", "company_id": 5,
+                           "package_id": 1, "mount_position": 2})
+
+
+def _wire_unassign(monkeypatch, store, db, calls):
+    monkeypatch.setattr(punassign, "get_db", lambda: db)
+    monkeypatch.setattr(punassign, "get_by_id", store.get_by_id)
+    monkeypatch.setattr(punassign, "get_where", store.get_where)
+    monkeypatch.setattr(punassign, "update", store.update)
+    monkeypatch.setattr(punassign, "audit", lambda *a, **k: None)
+
+    def fake_unbind_tbox(event, context):
+        calls["unbind_tbox"] += 1
+        return _resp(200, {})
+
+    def fake_unbind_sensor(event, context):
+        calls["unbind_sensor"] += 1
+        return _resp(200, {})
+
+    def fake_tire_delete(event, context):
+        calls["tire_delete"] += 1
+        return _resp(200, {})
+
+    monkeypatch.setattr(punassign, "unbind_tbox_handler", fake_unbind_tbox)
+    monkeypatch.setattr(punassign, "unbind_sensor_handler", fake_unbind_sensor)
+    monkeypatch.setattr(punassign, "tire_delete_handler", fake_tire_delete)
+
+
+def _unassign_event(pid):
+    return {"pathParameters": {"id": str(pid)}}
+
+
+def test_unassign_deletes_generic_tires_and_unbinds_tbox(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_assigned(store)
+    # 2 llantas que creó el paquete (folio PKG1-...), cada una con un sensor del kit
+    store.seed("tires", {"id": 10, "unit_id": 1, "folio": "PKG1-1", "mount_position": 1,
+                         "is_mounted": 1, "sensor_id": 20, "is_deleted": 0})
+    store.seed("tires", {"id": 11, "unit_id": 1, "folio": "PKG1-2", "mount_position": 2,
+                         "is_mounted": 1, "sensor_id": 21, "is_deleted": 0})
+    calls = defaultdict(int)
+    _wire_unassign(monkeypatch, store, db, calls)
+
+    resp = punassign.handler(_unassign_event(1), None)
+    assert resp["statusCode"] == 200
+    assert calls["tire_delete"] == 2       # borra las 2 genéricas que creó
+    assert calls["unbind_sensor"] == 0     # no hay reales reutilizadas
+    assert calls["unbind_tbox"] == 1
+    assert store.tables["packages"][1]["status"] == "prepared"
+    assert store.tables["packages"][1]["unit_id"] is None
+
+
+def test_unassign_keeps_reused_real_tire(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_assigned(store)
+    # una llanta REAL de la unidad (folio real), con un sensor del kit -> solo unbind sensor
+    store.seed("tires", {"id": 12, "unit_id": 1, "folio": "R-500", "mount_position": 1,
+                         "is_mounted": 1, "sensor_id": 20, "is_deleted": 0})
+    calls = defaultdict(int)
+    _wire_unassign(monkeypatch, store, db, calls)
+
+    resp = punassign.handler(_unassign_event(1), None)
+    assert resp["statusCode"] == 200
+    assert calls["tire_delete"] == 0       # la real NO se borra
+    assert calls["unbind_sensor"] == 1     # solo se le quita el sensor del kit
+    assert calls["unbind_tbox"] == 1
+    assert store.tables["packages"][1]["status"] == "prepared"
+
+
+def test_unassign_rejects_when_not_assigned(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_assigned(store)
+    store.tables["packages"][1]["status"] = "prepared"
+    calls = defaultdict(int)
+    _wire_unassign(monkeypatch, store, db, calls)
+    resp = punassign.handler(_unassign_event(1), None)
+    assert resp["statusCode"] == 409
+    assert calls["tire_delete"] == 0
+
+
+def test_assign_202_with_progress_and_audit_on_pending(monkeypatch):
+    # Si un sub-alta de llanta queda pending en la plataforma, el assign devuelve 202
+    # con el progreso (done/total) y deja un audit result='pending'.
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)  # 2 posiciones, unidad vacía
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+
+    def pending_tire_create(event, context):
+        calls["tire_create"] += 1
+        return _resp(202, {"data": {"reason": "plataforma pendiente"}})
+
+    audits = []
+    monkeypatch.setattr(passign, "tire_create_handler", pending_tire_create)
+    monkeypatch.setattr(passign, "audit", lambda *a, **k: audits.append(k))
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 202
+    d = _body(resp)["data"]
+    assert d["done"] == 0 and d["total"] == 2  # se cortó en la 1ª posición
+    assert any(a.get("result") == "pending" for a in audits)
