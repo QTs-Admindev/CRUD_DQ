@@ -1,6 +1,6 @@
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import get_many
+from shared.db.ops import get_in, get_many
 from shared.utils.response import error, ok
 
 DEFAULT_LIMIT = 300
@@ -37,6 +37,30 @@ def handler(event, context):
     db = get_db()
     try:
         rows = get_many(db, t("packages"), COLUMNS, filters, limit=limit)
-        return ok(rows)
+        return ok(_enrich(db, rows))
     except Exception as e:
         return error(500, f"DB error (list packages): {e}")
+
+
+def _enrich(db, rows: list[dict]) -> list[dict]:
+    # Enriquecer cada paquete con lo que el FE necesita en la lista:
+    #   - sensor_count: cuántos sensores cuelgan del paquete (sellados con su package_id).
+    #   - tboxCode: el código del tbox del paquete (o None si aún no tiene).
+    # Se resuelve con DOS consultas IN sobre todos los ids a la vez (no N+1).
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return rows
+
+    counts: dict = {}
+    for s in get_in(db, t("sensors"), "package_id", ids, "id, package_id"):
+        pid = s.get("package_id")
+        counts[pid] = counts.get(pid, 0) + 1
+
+    tbox_by_pkg: dict = {}
+    for tb in get_in(db, t("tboxes"), "package_id", ids, "package_id, tboxCode"):
+        tbox_by_pkg[tb.get("package_id")] = tb.get("tboxCode")
+
+    for r in rows:
+        r["sensor_count"] = counts.get(r["id"], 0)
+        r["tboxCode"] = tbox_by_pkg.get(r["id"])
+    return rows

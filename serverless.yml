@@ -270,6 +270,14 @@ functions:
           method: get
           cors: true
 
+  updatePackage:
+    handler: functions/packages/edit.handler
+    events:
+      - http:
+          path: /packages/{id}
+          method: put
+          cors: true
+
   deletePackage:
     handler: functions/packages/delete.handler
     events:
