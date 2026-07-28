@@ -117,12 +117,31 @@ def test_bind_sensor_happy(monkeypatch):
     assert st.posts[0][1]["vehicleId"] == 33369
 
 
-def test_bind_sensor_tire_not_mounted_409(monkeypatch):
+def test_bind_sensor_unmounted_local_only(monkeypatch):
+    # tire is NOT mounted (unit_id None): bind locally, never touch the platform.
     store, db, st = _seed(), FakeDB(), FakeSmartTyre()
     _wire(monkeypatch, bind_sensor, store, db, st)
-    resp = bind_sensor.handler(_ev(10, {"sensor_id": 20}), None)  # tire unit_id None
-    assert resp["statusCode"] == 409
-    assert st.posts == []
+    resp = bind_sensor.handler(_ev(10, {"sensor_id": 20}), None)
+    assert resp["statusCode"] == 200
+    assert store.rows[10]["sensor_id"] == 20          # bound locally
+    assert st.posts == []                             # platform NOT called
+    assert _body(resp)["synced_to_platform"] is False
+
+
+def test_bind_tire_syncs_pending_sensor(monkeypatch):
+    # mounting a tire that already has a locally-bound sensor syncs it to platform.
+    store, db, st = _seed(), FakeDB(), FakeSmartTyre()
+    store.rows[10]["sensor_id"] = 20  # sensor bound locally while unmounted
+    _wire(monkeypatch, bind_tire, store, db, st)
+    resp = bind_tire.handler(_ev(1, {"tire_id": 10, "axle_index": 2, "wheel_index": 4}), None)
+    assert resp["statusCode"] == 200
+    assert store.rows[10]["is_mounted"] == 1
+    paths = [p for p, _ in st.posts]
+    assert "/smartyre/openapi/vehicle/tyre/bind" in paths
+    assert "/smartyre/openapi/tyre/sensor/bind" in paths
+    sensor_post = next(b for p, b in st.posts if p == "/smartyre/openapi/tyre/sensor/bind")
+    assert sensor_post["sensorCode"] == "A4C13873C3E6"
+    assert sensor_post["vehicleId"] == 33369
 
 
 def test_unbind_sensor_happy(monkeypatch):

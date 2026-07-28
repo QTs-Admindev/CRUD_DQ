@@ -17,6 +17,21 @@ class BindSensorRequest(BaseModel):
     wheel_index: int | None = None
 
 
+def platform_bind_sensor(st, *, tyre_code, axle, wheel, sensor_code, vehicle_id):
+    """Bind a sensor to a tyre on the platform.
+
+    Shared by the direct sensor bind (mounted+synced tire) and by the deferred
+    sync that runs when a tire with a locally-bound sensor is later mounted.
+    """
+    st.post("/smartyre/openapi/tyre/sensor/bind", {
+        "tyreCode": str(tyre_code),
+        "axleIndex": axle,
+        "wheelIndex": wheel,
+        "sensorCode": sensor_code,
+        "vehicleId": vehicle_id,
+    })
+
+
 def handler(event, context):
     # path: /tires/{id}/sensors/bind  -> id = llanta local
     try:
@@ -34,14 +49,6 @@ def handler(event, context):
         return error(404, "Llanta no encontrada")
     if tire.get("sensor_id"):
         return error(409, "La llanta ya tiene un sensor vinculado")
-    # Binding sensor->tire needs the tire's vehicle (vehicleId in the platform).
-    if not tire.get("unit_id"):
-        return error(409, "La llanta no está montada en un vehículo")
-    if not tire.get("daijin_id"):
-        return error(409, "La llanta aún no está lista")
-    unit = get_by_id(db, t("units"), tire["unit_id"])
-    if not unit or not unit.get("daijin_id"):
-        return error(409, "El vehículo de la llanta aún no está listo")
     sensor = get_by_id(db, t("sensors"), body.sensor_id)
     if not sensor:
         return error(404, "Sensor no encontrado")
@@ -49,29 +56,64 @@ def handler(event, context):
     axle = body.axle_index if body.axle_index is not None else tire.get("axle_index")
     wheel = body.wheel_index if body.wheel_index is not None else tire.get("wheel_index")
 
-    try:
-        st = SmartTyreClient()
-        st.post("/smartyre/openapi/tyre/sensor/bind", {
-            "tyreCode": str(tire_id),
-            "axleIndex": axle,
-            "wheelIndex": wheel,
-            "sensorCode": sensor["sensorCode"],
-            "vehicleId": unit["daijin_id"],
-        })
-    except Exception as e:
-        return error(502, "No se pudo completar la vinculación del sensor, intenta de nuevo")
+    # Is the tire mounted AND fully synced with the platform? Only then can we
+    # bind the sensor remotely (the platform needs the vehicle). Otherwise we
+    # bind LOCALLY now and defer the platform sync until the tire is mounted.
+    unit = get_by_id(db, t("units"), tire["unit_id"]) if tire.get("unit_id") else None
+    synced = bool(
+        tire.get("unit_id")
+        and tire.get("daijin_id")
+        and unit
+        and unit.get("daijin_id")
+    )
 
-    # Local: la relación sensor<->llanta vive en tires.sensor_id.
+    if synced:
+        try:
+            st = SmartTyreClient()
+            platform_bind_sensor(
+                st,
+                tyre_code=tire_id,
+                axle=axle,
+                wheel=wheel,
+                sensor_code=sensor["sensorCode"],
+                vehicle_id=unit["daijin_id"],
+            )
+        except Exception:
+            return error(502, "No se pudo completar la vinculación del sensor, intenta de nuevo")
+
+        # Local: la relación sensor<->llanta vive en tires.sensor_id.
+        try:
+            rec = update(db, t("tires"), tire_id, {
+                "sensor_id": body.sensor_id,
+                "axle_index": axle,
+                "wheel_index": wheel,
+                "updated_at": now_ms(),
+            })
+            db.commit()
+            audit(db, event, context, action="bind", asset_type="sensor", asset_id=body.sensor_id,
+                  natural_key=sensor.get("sensorCode"), company_id=sensor.get("company_id"),
+                  daijin_id=sensor.get("daijin_id"), result="success", changes={"tire_id": tire_id})
+            return ok({**rec, "synced_to_platform": True})
+        except Exception as e:
+            db.rollback()
+            return error(500, f"DB error (bind sensor local): {e}")
+
+    # LOCAL-ONLY bind: the tire is unmounted (or the tire/unit is not yet synced).
+    # We record the sensor<->tire relation locally and defer the platform bind;
+    # it will run automatically when the tire is later mounted (see bind_tire).
     try:
         rec = update(db, t("tires"), tire_id, {
             "sensor_id": body.sensor_id,
+            "axle_index": axle,
+            "wheel_index": wheel,
             "updated_at": now_ms(),
         })
         db.commit()
         audit(db, event, context, action="bind", asset_type="sensor", asset_id=body.sensor_id,
               natural_key=sensor.get("sensorCode"), company_id=sensor.get("company_id"),
-              daijin_id=sensor.get("daijin_id"), result="success", changes={"tire_id": tire_id})
-        return ok(rec)
+              daijin_id=sensor.get("daijin_id"), result="pending",
+              changes={"tire_id": tire_id, "deferred": "platform sync until tire is mounted"})
+        return ok({**rec, "synced_to_platform": False})
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (bind sensor local): {e}")
