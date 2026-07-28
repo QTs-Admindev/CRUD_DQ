@@ -94,10 +94,10 @@ def handler(event, context):
     slots = tire_slots(catalog)
 
     # Miembros del paquete.
+    # Un paquete puede no tener tbox (lote: solo sensores, para tipos no motrices
+    # como remolques donde el Qbox vive en el tractor). En ese caso no se ata tbox.
     tboxes = get_where(db, t("tboxes"), "package_id = %s", [pid], 1)
-    if not tboxes:
-        return error(409, "El paquete no tiene tbox")
-    tbox = tboxes[0]
+    tbox = tboxes[0] if tboxes else None
     sensors = get_where(db, t("sensors"), "package_id = %s", [pid], 500)
     if len(sensors) < len(slots):
         return error(422, f"El paquete tiene {len(sensors)} sensores; el layout requiere {len(slots)}")
@@ -182,14 +182,16 @@ def handler(event, context):
 
         done += 1  # esta posición quedó completa
 
-    # d) Atar el tbox a la unidad.
-    tresp = bind_tbox_handler(
-        {"pathParameters": {"id": str(body.unit_id)},
-         "body": json.dumps({"tbox_id": tbox["id"]}), "headers": headers}, context)
-    if tresp["statusCode"] != 200:
-        _audit_partial(db, event, context, pkg, pid, company_id, "bind_tbox", None, done, total,
-                       _record(tresp))
-        return tresp
+    # d) Atar el tbox a la unidad. Solo si el paquete tiene tbox; un lote (sin tbox)
+    #    solo monta llantas + sensores y se salta este paso.
+    if tbox:
+        tresp = bind_tbox_handler(
+            {"pathParameters": {"id": str(body.unit_id)},
+             "body": json.dumps({"tbox_id": tbox["id"]}), "headers": headers}, context)
+        if tresp["statusCode"] != 200:
+            _audit_partial(db, event, context, pkg, pid, company_id, "bind_tbox", None, done, total,
+                           _record(tresp))
+            return tresp
 
     # e) Marcar el paquete como asignado.
     try:

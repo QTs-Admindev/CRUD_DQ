@@ -182,6 +182,37 @@ def test_create_happy_builds_prepared_package(monkeypatch):
     assert [s["mount_position"] for s in data["sensors"]] == [1, 2, 3, 4, 5, 6]
 
 
+def test_create_lote_without_tbox(monkeypatch):
+    # Un lote = paquete SIN tbox (solo sensores), para tipos no motrices (remolques).
+    store, db = Store(), FakeDB()
+    store.seed("unit_catalog", _catalog_2axles())
+    calls = defaultdict(int)
+    _wire_create(monkeypatch, store, db)
+
+    # el fake_tbox NO debe llamarse: contamos las llamadas envolviéndolo.
+    def guard_tbox(event, context):
+        calls["tbox"] += 1
+        raise AssertionError("no se debe crear tbox en un lote")
+
+    monkeypatch.setattr(pcreate, "tbox_create_handler", guard_tbox)
+
+    codes = [f"{i:012X}" for i in range(6)]
+    # body SIN tboxCode -> lote
+    resp = pcreate.handler({"body": json.dumps(
+        {"unit_catalog_id": 209, "sensorCodes": codes})}, None)
+    assert resp["statusCode"] == 200
+    data = _body(resp)
+    assert data["status"] == "prepared"
+    # no se creó tbox: ni se llamó al handler ni hay filas en la tabla
+    assert calls["tbox"] == 0
+    assert store.tables["tboxes"] == {}
+    # la respuesta no trae tbox, pero sí los N sensores sellados con mount_position
+    assert data["tbox"] is None
+    assert len(data["sensors"]) == 6
+    assert all(s["package_id"] == data["id"] for s in data["sensors"])
+    assert [s["mount_position"] for s in data["sensors"]] == [1, 2, 3, 4, 5, 6]
+
+
 # --------------------------------------------------------------------------- #
 #  move.py                                                                     #
 # --------------------------------------------------------------------------- #
@@ -384,6 +415,29 @@ def test_assign_maps_sensor_by_mount_position_not_id(monkeypatch):
     assert resp["statusCode"] == 200
     # posición 1 -> sensor con mount_position 1 (id 21); posición 2 -> mount_position 2 (id 20)
     assert bound == [21, 20]
+
+
+def test_assign_lote_without_tbox(monkeypatch):
+    # Un lote (paquete SIN tbox) se asigna igual: monta llantas + sensores, pero
+    # NUNCA ata tbox. El paquete queda 'assigned'.
+    store, db = Store(), FakeDB()
+    _seed_for_assign(store)
+    # quitar el tbox del seed -> paquete sin tbox (lote)
+    del store.tables["tboxes"][50]
+    store.tables["sensors"][20]["mount_position"] = 1
+    store.tables["sensors"][21]["mount_position"] = 2
+    calls = defaultdict(int)
+    _wire_assign(monkeypatch, store, db, calls)
+
+    resp = passign.handler(_assign_event(1, 1), None)
+    assert resp["statusCode"] == 200
+    assert calls["tire_create"] == 2
+    assert calls["bind_tire"] == 2
+    assert calls["bind_sensor"] == 2
+    # el tbox NUNCA se ata en un lote
+    assert calls["bind_tbox"] == 0
+    assert store.tables["packages"][1]["status"] == "assigned"
+    assert store.tables["packages"][1]["unit_id"] == 1
 
 
 # --------------------------------------------------------------------------- #

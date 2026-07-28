@@ -20,7 +20,10 @@ from functions.sensors.create import handler as sensor_create_handler
 class CreatePackageRequest(BaseModel):
     name: str | None = None
     unit_catalog_id: int
-    tboxCode: str
+    # Opcional: un paquete SIN tbox es un "lote" (solo sensores), pensado para
+    # tipos de unidad no motrices (p. ej. remolques) donde el Qbox vive en el
+    # tractor, no en el remolque.
+    tboxCode: str | None = None
     sensorCodes: list[str] = Field(min_length=1)
     # Un paquete SIEMPRE se prepara en la compañía admin (2). El campo es opcional;
     # si viene, se valida que sea exactamente ADMIN_COMPANY_ID.
@@ -70,15 +73,18 @@ def handler(event, context):
 
     headers = (event or {}).get("headers") or {}
 
-    # 5. Crear el TBox (reusa tboxes/create: idempotente + sync a Dajin).
-    tresp = tbox_create_handler(
-        {"body": json.dumps({"tbox_code": body.tboxCode, "company_id": company_id}),
-         "headers": headers}, context)
-    if tresp["statusCode"] == 202:
-        return pending({"stage": "tbox", "reason": _record(tresp)})
-    if tresp["statusCode"] != 200:
-        return tresp  # 422/409/500 del alta del tbox -> propagar tal cual
-    tbox_id = _record(tresp)["id"]
+    # 5. Crear el TBox (reusa tboxes/create: idempotente + sync a Dajin). Solo si
+    #    vino tboxCode; si no, es un lote (solo sensores) y no hay tbox.
+    tbox_id = None
+    if body.tboxCode:
+        tresp = tbox_create_handler(
+            {"body": json.dumps({"tbox_code": body.tboxCode, "company_id": company_id}),
+             "headers": headers}, context)
+        if tresp["statusCode"] == 202:
+            return pending({"stage": "tbox", "reason": _record(tresp)})
+        if tresp["statusCode"] != 200:
+            return tresp  # 422/409/500 del alta del tbox -> propagar tal cual
+        tbox_id = _record(tresp)["id"]
 
     # 6. Crear los sensores (reusa sensors/create: idempotente + sync a Dajin).
     sensor_ids: list[int] = []
@@ -93,21 +99,23 @@ def handler(event, context):
         sensor_ids.append(_record(sresp)["id"])
 
     # 7. Idempotencia del paquete: si el tbox ya cuelga de un paquete 'prepared',
-    #    reusarlo en vez de crear otro (re-post del mismo paquete).
+    #    reusarlo en vez de crear otro (re-post del mismo paquete). Un lote (sin
+    #    tbox) no tiene esta idempotencia: siempre se crea un paquete fresco.
     try:
-        tbox_row = get_by_id(db, t("tboxes"), tbox_id)
-        existing_pid = (tbox_row or {}).get("package_id")
         package_id = None
-        if existing_pid:
-            pkg = get_by_id(db, t("packages"), existing_pid)
-            if pkg and pkg.get("status") == "prepared":
-                package_id = existing_pid
+        if tbox_id is not None:
+            tbox_row = get_by_id(db, t("tboxes"), tbox_id)
+            existing_pid = (tbox_row or {}).get("package_id")
+            if existing_pid:
+                pkg = get_by_id(db, t("packages"), existing_pid)
+                if pkg and pkg.get("status") == "prepared":
+                    package_id = existing_pid
 
         # 8. Insertar el paquete (status 'prepared') si no existe aún.
         if package_id is None:
             ts = now_ms()
             pkg = insert(db, t("packages"), {
-                "name": body.name or f"Paquete {body.tboxCode}",
+                "name": body.name or (f"Paquete {body.tboxCode}" if body.tboxCode else "Lote"),
                 "unit_catalog_id": body.unit_catalog_id,
                 "company_id": company_id,
                 "unit_id": None,
@@ -123,7 +131,8 @@ def handler(event, context):
         #    (en el orden en que llegaron los códigos = orden de posición del FE)
         #    guarda su mount_position 1-based, para que el assign mapee sensor->
         #    posición de forma determinista y no dependa del orden de id.
-        update(db, t("tboxes"), tbox_id, {"package_id": package_id, "updated_at": now_ms()})
+        if tbox_id is not None:
+            update(db, t("tboxes"), tbox_id, {"package_id": package_id, "updated_at": now_ms()})
         for pos, sid in enumerate(sensor_ids, start=1):
             update(db, t("sensors"), sid,
                    {"package_id": package_id, "mount_position": pos, "updated_at": now_ms()})
@@ -138,6 +147,6 @@ def handler(event, context):
 
     return ok({
         **pkg,
-        "tbox": get_by_id(db, t("tboxes"), tbox_id),
+        "tbox": get_by_id(db, t("tboxes"), tbox_id) if tbox_id else None,
         "sensors": [get_by_id(db, t("sensors"), sid) for sid in sensor_ids],
     })
