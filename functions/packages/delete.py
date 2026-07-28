@@ -9,8 +9,8 @@ from shared.utils.response import error, ok
 def handler(event, context):
     # DELETE /packages/{id} -> retiro (soft delete) del paquete.
     # `packages` no tiene is_deleted: el borrado suave es status='retired'.
-    # No se puede retirar un paquete ya asignado (está montado en una unidad):
-    # primero hay que desmontarlo por los endpoints de la unidad.
+    # No se puede retirar un paquete ya asignado: asignar es TERMINAL e irreversible,
+    # el kit quedó consumido y montado en una unidad. No hay unassign que lo recupere.
     try:
         pid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
@@ -23,7 +23,8 @@ def handler(event, context):
     if pkg.get("status") == "retired":
         return ok(pkg)  # idempotente
     if pkg.get("status") == "assigned":
-        return error(409, "El paquete está asignado a una unidad; desmóntalo primero")
+        return error(409, "El paquete ya fue asignado (consumido) y montado en una unidad; "
+                          "no se puede eliminar")
 
     try:
         ts = now_ms()

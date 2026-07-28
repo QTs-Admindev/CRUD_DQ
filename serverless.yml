@@ -306,16 +306,6 @@ functions:
           method: post
           cors: true
 
-  # unassign deshace el assign: quita el tbox, desvincula los sensores y borra las
-  # llantas genéricas que el paquete creó; el paquete vuelve a 'prepared'.
-  unassignPackage:
-    handler: functions/packages/unassign.handler
-    events:
-      - http:
-          path: /packages/{id}/unassign
-          method: post
-          cors: true
-
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en Dajin.
   reconcile:
     handler: functions/reconciliation/reconcile.handler

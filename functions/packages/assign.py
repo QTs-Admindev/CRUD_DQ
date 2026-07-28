@@ -193,7 +193,10 @@ def handler(event, context):
                            _record(tresp))
             return tresp
 
-    # e) Marcar el paquete como asignado.
+    # e) Marcar el paquete como asignado. Este es el estado TERMINAL del paquete:
+    #    asignar es IRREVERSIBLE, el kit queda consumido y NO existe unassign. Una
+    #    vez montado, cualquier cambio posterior se hace a mano, sensor por sensor,
+    #    sobre la unidad en la plataforma; el paquete ya no se puede recuperar.
     try:
         update(db, t("packages"), pid, {
             "status": "assigned", "unit_id": body.unit_id, "updated_at": now_ms(),
