@@ -52,8 +52,9 @@ def _wire(monkeypatch, module, store, db, st):
 def _seed():
     store = FakeStore()
     store.rows[1] = {"id": 1, "daijin_id": 33369, "status": "active"}  # unit
+    # tire: con daijin_id — los binds exigen la llanta ya sincronizada en Dajin
     store.rows[10] = {"id": 10, "is_mounted": 0, "unit_id": None, "sensor_id": None,
-                      "axle_index": None, "wheel_index": None}  # tire
+                      "axle_index": None, "wheel_index": None, "daijin_id": 414997}
     store.rows[20] = {"id": 20, "sensorCode": "A4C13873C3E6"}  # sensor
     return store
 

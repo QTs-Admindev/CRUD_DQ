@@ -76,6 +76,34 @@ def get_where(db, table: str, where_sql: str, params=(), limit: int = 200) -> li
         return list(cur.fetchall())
 
 
+def get_in(db, table: str, field: str, values, columns: str = "*") -> list[dict]:
+    """Fetch every row whose `field` is IN `values`, chunked so huge lists (bulk
+    import: 2000+ codes) never build a single oversized IN clause."""
+    out: list[dict] = []
+    vals = list(values)
+    for i in range(0, len(vals), 500):
+        chunk = vals[i:i + 500]
+        placeholders = ", ".join(["%s"] * len(chunk))
+        sql = f"SELECT {columns} FROM {table} WHERE {field} IN ({placeholders})"
+        with db.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute(sql, chunk)
+            out.extend(cur.fetchall())
+    return out
+
+
+def insert_many(db, table: str, columns: list[str], rows: list[tuple]) -> int:
+    """Bulk INSERT via executemany. Returns the inserted count; caller commits.
+    One statement round-trip instead of N insert()+get_by_id() pairs — the per-row
+    helper would cost ~4 queries per sensor on a 2000-row import."""
+    if not rows:
+        return 0
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
+    with db.cursor() as cur:
+        cur.executemany(sql, rows)
+        return cur.rowcount
+
+
 def get_by_fields(db, table: str, filters: dict) -> dict | None:
     """Busca por una llave compuesta (varios campos AND). Para natural keys como
     (prefix, folio, company_id) en tires o (unit_identifier, company_id, unit_catalog_id)."""

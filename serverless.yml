@@ -19,6 +19,12 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
           Resource: '*'
+        # bulk_create dispara al worker de sincronización y este se re-invoca a sí
+        # mismo (continuación por timeout / pases de reintento).
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
 
 package:
   patterns:
@@ -214,6 +220,91 @@ functions:
     events:
       - http:
           path: /tires/{id}/sensors/unbind
+          method: post
+          cors: true
+
+  # Importación masiva de sensores (Excel en el FE). Inserta el lote local como
+  # 'registering' y delega TODO el tráfico a Dajin al worker asíncrono.
+  bulkCreateSensors:
+    handler: functions/sensors/bulk_create.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+    events:
+      - http:
+          path: /sensors/bulk
+          method: post
+          cors: true
+
+  # Worker del bulk: sin API Gateway (sin tope de 29 s). Se auto-encadena si se
+  # queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
+  # ids de su lote — NO es la reconciliación y no ve filas viejas.
+  sensorsBulkSyncWorker:
+    handler: functions/sensors/bulk_sync_worker.handler
+    timeout: 900
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+
+  # Paquetes de hardware: kit (1 TBox + N sensores, sin llantas) preparado en la
+  # compañía admin (2), movido a otra compañía y luego montado en una unidad real.
+  createPackage:
+    handler: functions/packages/create.handler
+    events:
+      - http:
+          path: /packages
+          method: post
+          cors: true
+
+  listPackages:
+    handler: functions/packages/list.handler
+    events:
+      - http:
+          path: /packages
+          method: get
+          cors: true
+
+  getPackage:
+    handler: functions/packages/get.handler
+    events:
+      - http:
+          path: /packages/{id}
+          method: get
+          cors: true
+
+  deletePackage:
+    handler: functions/packages/delete.handler
+    events:
+      - http:
+          path: /packages/{id}
+          method: delete
+          cors: true
+
+  movePackage:
+    handler: functions/packages/move.handler
+    events:
+      - http:
+          path: /packages/{id}/move
+          method: post
+          cors: true
+
+  # assign crea llantas genéricas cuando la posición está vacía: necesita el
+  # catálogo de llanta genérica que usa el alta de esas llantas.
+  assignPackage:
+    handler: functions/packages/assign.handler
+    environment:
+      GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
+    events:
+      - http:
+          path: /packages/{id}/assign
+          method: post
+          cors: true
+
+  # unassign deshace el assign: quita el tbox, desvincula los sensores y borra las
+  # llantas genéricas que el paquete creó; el paquete vuelve a 'prepared'.
+  unassignPackage:
+    handler: functions/packages/unassign.handler
+    events:
+      - http:
+          path: /packages/{id}/unassign
           method: post
           cors: true
 
