@@ -7,6 +7,8 @@ from functions.packages import create as pcreate
 from functions.packages import move as pmove
 from functions.packages import assign as passign
 from functions.packages import unassign as punassign
+from functions.packages import list as plist
+from functions.packages import edit as pedit
 
 
 # --------------------------------------------------------------------------- #
@@ -49,6 +51,16 @@ class Store:
     def get_by_id(self, db, table, rid):
         r = self.tables[table].get(rid)
         return dict(r) if r else None
+
+    def get_many(self, db, table, columns="*", filters=None, limit=300):
+        rows = sorted(self.tables[table].values(), key=lambda r: r["id"], reverse=True)
+        if filters:
+            rows = [r for r in rows if all(r.get(k) == v for k, v in filters.items())]
+        return [dict(r) for r in rows[:limit]]
+
+    def get_in(self, db, table, field, values, columns="*"):
+        vals = set(values)
+        return [dict(r) for r in self.tables[table].values() if r.get(field) in vals]
 
     def get_where(self, db, table, where, params=(), limit=200):
         rows = sorted(self.tables[table].values(), key=lambda r: r["id"])
@@ -487,3 +499,136 @@ def test_assign_202_with_progress_and_audit_on_pending(monkeypatch):
     d = _body(resp)["data"]
     assert d["done"] == 0 and d["total"] == 2  # se cortó en la 1ª posición
     assert any(a.get("result") == "pending" for a in audits)
+
+
+# --------------------------------------------------------------------------- #
+#  list.py  (enriquecido con sensor_count + tboxCode)                          #
+# --------------------------------------------------------------------------- #
+def _wire_list(monkeypatch, store, db):
+    monkeypatch.setattr(plist, "get_db", lambda: db)
+    monkeypatch.setattr(plist, "get_many", store.get_many)
+    monkeypatch.setattr(plist, "get_in", store.get_in)
+
+
+def test_list_enriches_with_sensor_count_and_tboxcode(monkeypatch):
+    store, db = Store(), FakeDB()
+    # un paquete con su tbox + 2 sensores sellados, y otro paquete vacío
+    store.seed("packages", {"id": 1, "name": "kit", "unit_catalog_id": 209,
+                            "company_id": 2, "unit_id": None, "status": "prepared"})
+    store.seed("packages", {"id": 2, "name": "vacio", "unit_catalog_id": 209,
+                            "company_id": 2, "unit_id": None, "status": "prepared"})
+    store.seed("tboxes", {"id": 50, "tboxCode": "AA11BB22CC33", "company_id": 2, "package_id": 1})
+    store.seed("sensors", {"id": 20, "sensorCode": "BB", "company_id": 2, "package_id": 1})
+    store.seed("sensors", {"id": 21, "sensorCode": "CC", "company_id": 2, "package_id": 1})
+    _wire_list(monkeypatch, store, db)
+
+    resp = plist.handler({}, None)
+    assert resp["statusCode"] == 200
+    rows = {r["id"]: r for r in _body(resp)}
+    assert rows[1]["sensor_count"] == 2
+    assert rows[1]["tboxCode"] == "AA11BB22CC33"
+    # el paquete sin miembros reporta 0 sensores y tboxCode None
+    assert rows[2]["sensor_count"] == 0
+    assert rows[2]["tboxCode"] is None
+
+
+# --------------------------------------------------------------------------- #
+#  edit.py  (PUT /packages/{id})                                              #
+# --------------------------------------------------------------------------- #
+def _wire_edit(monkeypatch, store, db):
+    monkeypatch.setattr(pedit, "get_db", lambda: db)
+    monkeypatch.setattr(pedit, "get_by_id", store.get_by_id)
+    monkeypatch.setattr(pedit, "get_where", store.get_where)
+    monkeypatch.setattr(pedit, "update", store.update)
+    monkeypatch.setattr(pedit, "audit", lambda *a, **k: None)
+
+    def fake_tbox(event, context):
+        b = json.loads(event["body"])
+        # idempotente: reutiliza un tbox vivo con el mismo código, o crea uno nuevo.
+        for r in store.tables["tboxes"].values():
+            if r.get("tboxCode") == b["tbox_code"]:
+                return _resp(200, dict(r))
+        row = store.insert(db, "tboxes", {
+            "tboxCode": b["tbox_code"], "company_id": b["company_id"],
+            "daijin_id": 900, "status": "active", "package_id": None,
+        })
+        return _resp(200, row)
+
+    def fake_sensor(event, context):
+        b = json.loads(event["body"])
+        for r in store.tables["sensors"].values():
+            if r.get("sensorCode") == b["sensor_code"]:
+                return _resp(200, dict(r))
+        row = store.insert(db, "sensors", {
+            "sensorCode": b["sensor_code"], "company_id": b["company_id"],
+            "daijin_id": 800, "status": "active", "package_id": None,
+        })
+        return _resp(200, row)
+
+    monkeypatch.setattr(pedit, "tbox_create_handler", fake_tbox)
+    monkeypatch.setattr(pedit, "sensor_create_handler", fake_sensor)
+
+
+def _seed_editable(store, status="prepared"):
+    # layout: axles_count=1, tires_axle_1=2 -> N = 2 sensores
+    store.seed("unit_catalog", {"id": 209, "name": "van", "type": "motive",
+                                "axles_count": 1, "tires_axle_1": 2})
+    store.seed("packages", {"id": 1, "name": "kit", "unit_catalog_id": 209,
+                            "company_id": 2, "unit_id": None, "status": status})
+    store.seed("tboxes", {"id": 50, "tboxCode": "AA11BB22CC33", "company_id": 2, "package_id": 1})
+    store.seed("sensors", {"id": 20, "sensorCode": "AAAAAAAAAAAA", "company_id": 2,
+                           "package_id": 1, "mount_position": 1})
+    store.seed("sensors", {"id": 21, "sensorCode": "BBBBBBBBBBBB", "company_id": 2,
+                           "package_id": 1, "mount_position": 2})
+
+
+def _edit_event(pid, **body):
+    return {"pathParameters": {"id": str(pid)}, "body": json.dumps(body)}
+
+
+def test_edit_rejects_non_prepared(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_editable(store, status="assigned")
+    _wire_edit(monkeypatch, store, db)
+    resp = pedit.handler(_edit_event(1, name="nuevo"), None)
+    assert resp["statusCode"] == 409
+    assert "status=assigned" in json.dumps(_body(resp))
+    # nada cambió
+    assert store.tables["packages"][1]["name"] == "kit"
+
+
+def test_edit_happy_swaps_sensor_and_reseals_tbox(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_editable(store)
+    _wire_edit(monkeypatch, store, db)
+
+    # quitamos BBBB..., dejamos AAAA... y agregamos CCCC...; cambiamos el tbox.
+    resp = pedit.handler(_edit_event(
+        1, name="kit v2", tboxCode="DD44EE55FF66",
+        sensorCodes=["AAAAAAAAAAAA", "CCCCCCCCCCCC"]), None)
+    assert resp["statusCode"] == 200
+
+    # nombre actualizado
+    assert store.tables["packages"][1]["name"] == "kit v2"
+
+    # el sensor removido (BBBB, id 21) queda desellado
+    assert store.tables["sensors"][21]["package_id"] is None
+    assert store.tables["sensors"][21]["mount_position"] is None
+
+    # el set nuevo queda sellado con su mount_position 1-based (orden del set)
+    sealed = {r["sensorCode"]: r for r in store.tables["sensors"].values()
+              if r.get("package_id") == 1}
+    assert set(sealed) == {"AAAAAAAAAAAA", "CCCCCCCCCCCC"}
+    assert sealed["AAAAAAAAAAAA"]["mount_position"] == 1
+    assert sealed["CCCCCCCCCCCC"]["mount_position"] == 2
+
+    # el tbox se reselló: el viejo se desella, el nuevo cuelga del paquete
+    assert store.tables["tboxes"][50]["package_id"] is None
+    new_tbox = [r for r in store.tables["tboxes"].values()
+                if r.get("tboxCode") == "DD44EE55FF66"][0]
+    assert new_tbox["package_id"] == 1
+
+    # la respuesta trae la forma de get.py (tbox + sensors actuales)
+    data = _body(resp)
+    assert data["tbox"]["tboxCode"] == "DD44EE55FF66"
+    assert len(data["sensors"]) == 2
