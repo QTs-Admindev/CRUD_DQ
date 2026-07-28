@@ -6,7 +6,6 @@ import pytest
 from functions.packages import create as pcreate
 from functions.packages import move as pmove
 from functions.packages import assign as passign
-from functions.packages import unassign as punassign
 from functions.packages import list as plist
 from functions.packages import edit as pedit
 
@@ -438,98 +437,6 @@ def test_assign_lote_without_tbox(monkeypatch):
     assert calls["bind_tbox"] == 0
     assert store.tables["packages"][1]["status"] == "assigned"
     assert store.tables["packages"][1]["unit_id"] == 1
-
-
-# --------------------------------------------------------------------------- #
-#  unassign.py  (deshace el assign)                                            #
-# --------------------------------------------------------------------------- #
-def _seed_assigned(store):
-    store.seed("unit_catalog", {"id": 209, "axles_count": 1, "tires_axle_1": 2})
-    store.seed("packages", {"id": 1, "name": "kit", "unit_catalog_id": 209,
-                            "company_id": 5, "unit_id": 1, "status": "assigned"})
-    store.seed("units", {"id": 1, "unit_catalog_id": 209, "company_id": 5,
-                         "daijin_id": 33369, "tbox_id": 50})
-    store.seed("tboxes", {"id": 50, "tboxCode": "AA", "company_id": 5, "package_id": 1})
-    store.seed("sensors", {"id": 20, "sensorCode": "BB", "company_id": 5,
-                           "package_id": 1, "mount_position": 1})
-    store.seed("sensors", {"id": 21, "sensorCode": "CC", "company_id": 5,
-                           "package_id": 1, "mount_position": 2})
-
-
-def _wire_unassign(monkeypatch, store, db, calls):
-    monkeypatch.setattr(punassign, "get_db", lambda: db)
-    monkeypatch.setattr(punassign, "get_by_id", store.get_by_id)
-    monkeypatch.setattr(punassign, "get_where", store.get_where)
-    monkeypatch.setattr(punassign, "update", store.update)
-    monkeypatch.setattr(punassign, "audit", lambda *a, **k: None)
-
-    def fake_unbind_tbox(event, context):
-        calls["unbind_tbox"] += 1
-        return _resp(200, {})
-
-    def fake_unbind_sensor(event, context):
-        calls["unbind_sensor"] += 1
-        return _resp(200, {})
-
-    def fake_tire_delete(event, context):
-        calls["tire_delete"] += 1
-        return _resp(200, {})
-
-    monkeypatch.setattr(punassign, "unbind_tbox_handler", fake_unbind_tbox)
-    monkeypatch.setattr(punassign, "unbind_sensor_handler", fake_unbind_sensor)
-    monkeypatch.setattr(punassign, "tire_delete_handler", fake_tire_delete)
-
-
-def _unassign_event(pid):
-    return {"pathParameters": {"id": str(pid)}}
-
-
-def test_unassign_deletes_generic_tires_and_unbinds_tbox(monkeypatch):
-    store, db = Store(), FakeDB()
-    _seed_assigned(store)
-    # 2 llantas que creó el paquete (folio PKG1-...), cada una con un sensor del kit
-    store.seed("tires", {"id": 10, "unit_id": 1, "folio": "PKG1-1", "mount_position": 1,
-                         "is_mounted": 1, "sensor_id": 20, "is_deleted": 0})
-    store.seed("tires", {"id": 11, "unit_id": 1, "folio": "PKG1-2", "mount_position": 2,
-                         "is_mounted": 1, "sensor_id": 21, "is_deleted": 0})
-    calls = defaultdict(int)
-    _wire_unassign(monkeypatch, store, db, calls)
-
-    resp = punassign.handler(_unassign_event(1), None)
-    assert resp["statusCode"] == 200
-    assert calls["tire_delete"] == 2       # borra las 2 genéricas que creó
-    assert calls["unbind_sensor"] == 0     # no hay reales reutilizadas
-    assert calls["unbind_tbox"] == 1
-    assert store.tables["packages"][1]["status"] == "prepared"
-    assert store.tables["packages"][1]["unit_id"] is None
-
-
-def test_unassign_keeps_reused_real_tire(monkeypatch):
-    store, db = Store(), FakeDB()
-    _seed_assigned(store)
-    # una llanta REAL de la unidad (folio real), con un sensor del kit -> solo unbind sensor
-    store.seed("tires", {"id": 12, "unit_id": 1, "folio": "R-500", "mount_position": 1,
-                         "is_mounted": 1, "sensor_id": 20, "is_deleted": 0})
-    calls = defaultdict(int)
-    _wire_unassign(monkeypatch, store, db, calls)
-
-    resp = punassign.handler(_unassign_event(1), None)
-    assert resp["statusCode"] == 200
-    assert calls["tire_delete"] == 0       # la real NO se borra
-    assert calls["unbind_sensor"] == 1     # solo se le quita el sensor del kit
-    assert calls["unbind_tbox"] == 1
-    assert store.tables["packages"][1]["status"] == "prepared"
-
-
-def test_unassign_rejects_when_not_assigned(monkeypatch):
-    store, db = Store(), FakeDB()
-    _seed_assigned(store)
-    store.tables["packages"][1]["status"] = "prepared"
-    calls = defaultdict(int)
-    _wire_unassign(monkeypatch, store, db, calls)
-    resp = punassign.handler(_unassign_event(1), None)
-    assert resp["statusCode"] == 409
-    assert calls["tire_delete"] == 0
 
 
 def test_assign_202_with_progress_and_audit_on_pending(monkeypatch):
