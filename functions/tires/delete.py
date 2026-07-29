@@ -44,6 +44,7 @@ def _recover_package_platform(db, rid, daijin_id, m):
     sensors = get_where(db, t("sensors"), "package_id = %s", [pid])
     sensor = next((s for s in sensors if s.get("mount_position") == pos), None)
     sensor_code = sensor.get("sensorCode") if sensor else None
+    sensor_daijin = sensor.get("daijin_id") if sensor else None
 
     # axle/wheel de esta posición según el layout del unit_catalog del paquete.
     catalog = get_by_id(db, "unit_catalog", pkg.get("unit_catalog_id")) if pkg else None
@@ -83,7 +84,30 @@ def _recover_package_platform(db, rid, daijin_id, m):
         return (_NET_FAIL, str(e))
 
     # 3) La plataforma quedó limpia: reintentar el borrado remoto.
-    return attempt_delete("tyre", str(daijin_id))
+    status, msg = attempt_delete("tyre", str(daijin_id))
+    if status != GUARD:
+        return (status, msg)
+
+    # 4) Sigue en GUARD: el desvinculado "en frío" no bastó porque el vehículo del
+    #    paquete ya no existe (unidad borrada, sin daijin_id) -> el sensor no se pudo
+    #    soltar por falta de vehicleId. HUÉRFANO real: la única forma de liberar la
+    #    llanta es BORRAR el sensor en la plataforma. El sensor local SOBREVIVE (queda
+    #    en inventario); solo se limpia su daijin_id para que vuelva a sincronizar como
+    #    nuevo cuando se reutilice. Luego se reintenta el borrado de la llanta.
+    if sensor_daijin:
+        s_status, _ = attempt_delete("sensor", str(sensor_daijin))
+        if s_status == TRANSIENT:
+            return (_NET_FAIL, "no se pudo liberar el sensor huérfano (transitorio)")
+        # DONE o GUARD (p. ej. "ya no existe"): el sensor ya no bloquea. Limpiar el
+        # vínculo local del sensor (sobrevive sin daijin_id).
+        try:
+            update(db, t("sensors"), sensor["id"], {"daijin_id": None, "updated_at": now_ms()})
+            db.commit()
+        except Exception:
+            db.rollback()
+        status, msg = attempt_delete("tyre", str(daijin_id))
+
+    return (status, msg)
 
 
 def handler(event, context):
