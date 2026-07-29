@@ -3,7 +3,7 @@ from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, soft_delete, update
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete
-from shared.smarttyre.client import SmartTyreClient
+from shared.smarttyre.client import SmartTyreClient, SmartTyreError
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending_delete
 from functions.vehicles.create import _dajin_type
@@ -31,6 +31,30 @@ def handler(event, context):
     if mounted:
         st = SmartTyreClient()
         for tyre in mounted:
+            # Primero LIBERAR el sensor de la llanta en la plataforma (mientras aún
+            # tenemos el vehicleId de la unidad). Si no se hace aquí, al borrar la
+            # unidad se pierde su daijin_id y el sensor queda pegado a la llanta en la
+            # plataforma sin forma de soltarlo -> la llanta queda HUÉRFANA y no se
+            # puede borrar después. El sensor SOBREVIVE (vuelve a inventario).
+            if rec.get("daijin_id") and tyre.get("sensor_id"):
+                sensor = get_by_id(db, t("sensors"), tyre["sensor_id"])
+                try:
+                    st.post("/smartyre/openapi/tyre/sensor/unbind", {
+                        "tyreCode": str(tyre["id"]),
+                        "vehicleId": rec.get("daijin_id"),
+                        "axleIndex": tyre.get("axle_index"),
+                        "wheelIndex": tyre.get("wheel_index"),
+                        "sensorCode": sensor.get("sensorCode") if sensor else None,
+                    })
+                except SmartTyreError:
+                    pass  # ya desvinculado en la plataforma: estado deseado
+                except Exception:
+                    return error(502, "No se pudieron liberar los sensores, intenta de nuevo")
+                try:
+                    update(db, t("tires"), tyre["id"], {"sensor_id": None, "updated_at": now_ms()})
+                except Exception as e:
+                    db.rollback()
+                    return error(500, f"DB error (liberar sensor de llanta {tyre['id']}): {e}")
             if rec.get("daijin_id"):
                 try:
                     st.post("/smartyre/openapi/vehicle/tyre/unbind", {

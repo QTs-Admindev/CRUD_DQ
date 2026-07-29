@@ -114,6 +114,29 @@ def test_vehicle_delete_dajin_ok(monkeypatch):
     assert remote.calls == [("vehicle", "33")]
 
 
+# --- cascada: al borrar la unidad se LIBERA el sensor de cada llanta montada en la
+#     plataforma (con el vehicleId de la unidad), evitando que queden huérfanas ---
+def test_vehicle_delete_cascade_unbinds_tire_sensor(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
+    store.mounted = [
+        {"id": 5, "sensor_id": 42, "axle_index": 1, "wheel_index": 2},
+    ]
+    store.rows[5] = {"id": 5, "sensor_id": 42, "axle_index": 1, "wheel_index": 2}
+    store.rows[42] = {"id": 42, "sensorCode": "A4C1388A0005"}
+    remote = FakeRemote((DONE, None))
+    st = _wire(monkeypatch, vdel, store, remote)
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 200
+    # primero desvinculó el sensor (con vehicleId + sensorCode), luego desmontó la llanta
+    assert ("/smartyre/openapi/tyre/sensor/unbind", {
+        "tyreCode": "5", "vehicleId": "33", "axleIndex": 1, "wheelIndex": 2,
+        "sensorCode": "A4C1388A0005"}) in st.posts
+    assert ("/smartyre/openapi/vehicle/tyre/unbind",
+            {"vehicleId": "33", "tyreCode": "5"}) in st.posts
+    # el sensor de la llanta quedó liberado en local (sobrevive en inventario)
+    assert store.rows[5]["sensor_id"] is None
+
+
 # --- sin daijin_id: nunca sincronizó -> solo local, no llama a Dajin ---
 def test_vehicle_delete_without_daijin_skips_remote(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": None}})
@@ -306,6 +329,36 @@ def test_pkg_tire_delete_recovers_platform_then_deletes(monkeypatch):
     assert remote.calls == [("tyre", "77"), ("tyre", "77")]
     assert store.rows[5]["is_deleted"] == 1
     assert store.rows[5]["daijin_id"] is None
+
+
+def test_pkg_tire_delete_orphan_deletes_sensor_then_tyre(monkeypatch):
+    # Unidad del paquete BORRADA (sin daijin_id): no hay vehicleId para soltar el
+    # sensor "en frío", así que la limpieza no basta y el retry sigue GUARD. Fallback:
+    # borrar el sensor en la plataforma libera la llanta; el sensor local SOBREVIVE
+    # (se limpia su daijin_id) y la llanta se borra. Sin medio-estado.
+    store = FakeStore({
+        5: {"id": 5, "is_deleted": 0, "unit_id": None, "sensor_id": None,
+            "daijin_id": "77", "folio": "PKG10-2", "axle_index": None, "wheel_index": None},
+        10: {"id": 10, "unit_id": 20, "unit_catalog_id": 30},
+        20: {"id": 20, "daijin_id": None},          # unidad borrada: sin vehicleId
+        30: {"id": 30, "axles_count": 1, "tires_axle_1": 2},
+        42: {"id": 42, "daijin_id": "282720"},      # fila del sensor (para el update local)
+    })
+    store.pkg_sensors = [
+        {"id": 42, "package_id": 10, "mount_position": 2, "sensorCode": "A4C1388A0005",
+         "daijin_id": "282720"},
+    ]
+    # tyre GUARD, tyre GUARD (limpieza en frío no bastó), sensor DONE, tyre DONE.
+    remote = SeqRemote([(GUARD, "531"), (GUARD, "531"), (DONE, None), (DONE, None)])
+    _wire(monkeypatch, tdel, store, remote)
+    resp = tdel.handler(_ev(5), None)
+    assert resp["statusCode"] == 200
+    # se borró el sensor en la plataforma para liberar la llanta huérfana
+    assert ("sensor", "282720") in remote.calls
+    # el sensor local sobrevive, sin daijin_id (vuelve a sincronizar al reutilizarse)
+    assert store.rows[42]["daijin_id"] is None
+    # la llanta se cerró en local recién tras el borrado remoto confirmado
+    assert store.rows[5]["is_deleted"] == 1
 
 
 def test_pkg_tire_delete_still_guard_does_not_soft_delete(monkeypatch):
