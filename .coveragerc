@@ -1,0 +1,17 @@
+# Mide el codigo de produccion, no las pruebas. Incluir tests/ infla la cifra
+# porque esos archivos se ejecutan enteros por definicion.
+[run]
+branch = True
+omit =
+    tests/*
+    */tests/*
+    conftest.py
+    */__pycache__/*
+    */site-packages/*
+    setup.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

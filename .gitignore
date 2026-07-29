@@ -14,3 +14,9 @@ tester.html
 
 *.png
 dajin_*.png
+
+# Datos crudos de cobertura: se regeneran en cada corrida.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

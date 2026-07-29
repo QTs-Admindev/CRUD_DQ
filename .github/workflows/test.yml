@@ -26,4 +26,8 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -v
+        # El umbral esta en 62, por debajo del 67 actual: no rompe hoy, pero
+        # impide que la cobertura baje sin que nadie se entere. La configuracion
+        # de que se mide esta en .coveragerc, que excluye tests/ para que la
+        # cifra no salga inflada por los propios archivos de prueba.
+        run: pytest --cov=. --cov-report=term-missing --cov-fail-under=62
