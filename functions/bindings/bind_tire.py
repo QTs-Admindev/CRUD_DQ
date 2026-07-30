@@ -6,7 +6,7 @@ from functions.bindings.bind_sensor import platform_bind_sensor
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, update
+from shared.db.ops import get_by_id, get_where, update
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
@@ -43,6 +43,21 @@ def handler(event, context):
         return error(409, "La llanta ya está montada")
     if not tire.get("daijin_id"):
         return error(409, "La llanta aún no está lista")
+
+    # Tenant guard: tire and unit must belong to the same company.
+    if tire.get("company_id") != unit.get("company_id"):
+        return error(409, "La llanta y la unidad son de compañías distintas")
+
+    # Position guard: only one live, mounted tire per (unit, axle, wheel) position.
+    occupied = get_where(
+        db, t("tires"),
+        "unit_id = %s AND axle_index = %s AND wheel_index = %s AND is_mounted = 1 "
+        "AND id <> %s AND (is_deleted IS NULL OR is_deleted = 0)",
+        [unit_id, body.axle_index, body.wheel_index, body.tire_id],
+        1,
+    )
+    if occupied:
+        return error(409, "Ya hay una llanta en esa posición")
 
     # Platform first: vehicleId = unit's daijin_id, tyreCode = local tire id.
     try:
