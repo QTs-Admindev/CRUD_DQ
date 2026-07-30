@@ -20,6 +20,8 @@ class FakeStore:
             "tboxes": {30: {"id": 30, "company_id": 100, "tboxCode": "TBX30"}},
             "unit_catalog": {5: {"id": 5, "name": "truck", "type": "truck", "d_id": "7"},
                              9: {"id": 9, "name": "trailer", "type": "trailer", "d_id": "3"}},
+            "companies": {100: {"id": 100, "company_name": "Acme"},
+                          200: {"id": 200, "company_name": "Globex"}},
         }
 
     def _tbl(self, table):
@@ -136,3 +138,25 @@ def test_empty_body_is_noop_200(monkeypatch):
     _wire(monkeypatch, store)
     resp = mod.handler(_ev(1, {}), None)
     assert resp["statusCode"] == 200
+
+
+def test_company_change_nonexistent_company_422(monkeypatch):
+    store = FakeStore()
+    _wire(monkeypatch, store)
+    resp = mod.handler(_ev(1, {"company_id": 999}), None)  # not in companies
+    assert resp["statusCode"] == 422
+    assert store.rows["units"][1]["company_id"] == 100   # unchanged, no cascade
+    assert store.rows["tires"][10]["company_id"] == 100  # cascade never ran
+
+
+def test_success_returns_200_even_if_audit_fails(monkeypatch):
+    store = FakeStore()
+    _wire(monkeypatch, store)
+
+    def boom(*a, **k):
+        raise RuntimeError("audit table down")
+
+    monkeypatch.setattr(mod, "audit", boom)  # audit is best-effort, not fatal
+    resp = mod.handler(_ev(1, {"unit_identifier": "NEW"}), None)
+    assert resp["statusCode"] == 200
+    assert store.rows["units"][1]["unit_identifier"] == "NEW"

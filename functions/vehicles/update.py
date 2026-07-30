@@ -47,6 +47,16 @@ def handler(event, context):
     if body.mileage is not None:
         changes["mileage"] = body.mileage
 
+    # company_id: validate the target company EXISTS before any DB write or platform
+    # call — an arbitrary int would otherwise orphan the unit (and its cascaded assets)
+    # to a phantom company. `companies` is a real (non-prefixed) reference table.
+    cascade_company_id = None
+    if body.company_id is not None and body.company_id != unit.get("company_id"):
+        if not get_by_id(db, "companies", body.company_id):
+            return error(422, "company_id no existe")
+        changes["company_id"] = body.company_id
+        cascade_company_id = body.company_id
+
     # unit_catalog_id (model): validate the new catalog and, when the unit is already
     # synced, update the platform FIRST — the DB is never touched if that call fails.
     if body.unit_catalog_id is not None and body.unit_catalog_id != unit.get("unit_catalog_id"):
@@ -80,13 +90,9 @@ def handler(event, context):
 
         changes["unit_catalog_id"] = body.unit_catalog_id
 
-    # company_id: change the unit and cascade the SAME company_id (local-only) to every
-    # live mounted tire, each such tire's sensor, and the unit's tbox — one transaction.
-    cascade_company_id = None
-    if body.company_id is not None and body.company_id != unit.get("company_id"):
-        changes["company_id"] = body.company_id
-        cascade_company_id = body.company_id
-
+    # The company_id change (validated above) cascades the SAME company_id (local-only)
+    # to every live mounted tire, each such tire's sensor, and the unit's tbox — one
+    # transaction driven by cascade_company_id.
     if not changes:
         return ok(unit)
 
@@ -111,12 +117,18 @@ def handler(event, context):
 
         rec = update(db, t("units"), unit_id, changes)
         db.commit()
-        audit(db, event, context, action="update", asset_type="unit", asset_id=unit_id,
-              natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
-              daijin_id=unit.get("daijin_id"), result="success", changes=changes)
-        return ok(rec)
     except Exception as e:
         db.rollback()
         if "Duplicate" in str(e):
             return error(409, "Ya existe una unidad con ese identificador")
         return error(500, f"DB error (update unit): {e}")
+
+    # Audit is best-effort: the update is already committed, so a failure here must
+    # never turn a real success into a 500 (a false-failure banner in the FE).
+    try:
+        audit(db, event, context, action="update", asset_type="unit", asset_id=unit_id,
+              natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
+              daijin_id=unit.get("daijin_id"), result="success", changes=changes)
+    except Exception:
+        pass
+    return ok(rec)
