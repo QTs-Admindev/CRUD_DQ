@@ -31,6 +31,10 @@ def handler(event, context):
     # Cannot reassign while bound to a tire; unbind first.
     if exists(db, t("tires"), {"sensor_id": rid, "is_deleted": 0}):
         return error(409, "El sensor está vinculado a una llanta; desvincúlalo primero")
+    # The target company must exist; otherwise the sensor would be orphaned to a
+    # phantom company. `companies` is a real (non-prefixed) reference table.
+    if not get_by_id(db, "companies", body.company_id):
+        return error(422, "company_id no existe")
 
     try:
         rec = update(db, t("sensors"), rid, {"company_id": body.company_id, "updated_at": now_ms()})

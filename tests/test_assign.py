@@ -38,11 +38,21 @@ def _ev(rid, company):
 
 
 def test_assign_sensor_happy(monkeypatch):
-    store = FakeStore({1: {"id": 1, "company_id": None}})
+    # rid 1 is the sensor; rid 100 stands in for the target company row (the
+    # FakeStore is not table-aware, so both live in the same dict).
+    store = FakeStore({1: {"id": 1, "company_id": None}, 100: {"id": 100}})
     _wire(monkeypatch, sassign, store)
     resp = sassign.handler(_ev(1, 100), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["company_id"] == 100
+
+
+def test_assign_sensor_nonexistent_company_422(monkeypatch):
+    store = FakeStore({1: {"id": 1, "company_id": None}})  # no company row
+    _wire(monkeypatch, sassign, store)
+    resp = sassign.handler(_ev(1, 999), None)
+    assert resp["statusCode"] == 422
+    assert store.rows[1]["company_id"] is None
 
 
 def test_assign_sensor_blocked_when_bound(monkeypatch):

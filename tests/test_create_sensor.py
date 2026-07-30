@@ -150,6 +150,25 @@ def test_platform_down_returns_pending_and_stays_registering(wire):
     assert row.get("daijin_id") is None
 
 
+def test_defaults_to_provider_company_when_omitted(wire):
+    # No company_id given -> sensor is born under DEFAULT_SENSOR_COMPANY_ID (2).
+    st = FakeSmartTyre(existing=[], after=[{"id": 424242}])
+    store, db = wire(st)
+    resp = mod.handler({"body": json.dumps({"sensor_code": "A4C13873C3E6"})}, None)
+    assert resp["statusCode"] == 200
+    row = store.get_by_field(db, "sensors", "sensorCode", "A4C13873C3E6")
+    assert row["company_id"] == mod.DEFAULT_SENSOR_COMPANY_ID == 2
+
+
+def test_explicit_company_id_is_respected(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 1}])
+    store, db = wire(st)
+    resp = mod.handler(_event(company=777), None)
+    assert resp["statusCode"] == 200
+    row = store.get_by_field(db, "sensors", "sensorCode", "A4C13873C3E6")
+    assert row["company_id"] == 777
+
+
 def test_invalid_sensor_code_returns_422(wire):
     wire(FakeSmartTyre())
     resp = mod.handler(_event(code="XYZ"), None)

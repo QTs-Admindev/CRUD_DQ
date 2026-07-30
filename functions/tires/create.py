@@ -25,8 +25,8 @@ class CreateTireRequest(BaseModel):
     status: str = "new"  # status de negocio final (new/used/renewed/...)
     unit_id: int | None = None
     sensor_id: int | None = None
-    current_depth: float = 0
-    tire_mileage: float = 0
+    current_depth: float | None = 0
+    tire_mileage: float | None = 0
     is_mounted: int = 0
     mount_position: int | None = None
     axle_index: int | None = None
@@ -44,6 +44,19 @@ def handler(event, context):
         return error(422, e.errors())
 
     db = get_db()
+
+    # Validate the tire catalog exists before creating anything (tires_catalog is a
+    # real, non-prefixed reference table, like unit_catalog).
+    try:
+        if not get_by_id(db, "tires_catalog", body.tires_catalog_id):
+            return error(422, "tires_catalog_id no existe")
+    except Exception as e:
+        return error(500, f"DB error (tires_catalog lookup): {e}")
+
+    # A null depth/mileage from the FE is treated as 0 (not a validation error).
+    current_depth = body.current_depth if body.current_depth is not None else 0
+    tire_mileage = body.tire_mileage if body.tire_mileage is not None else 0
+
     # El folio debe ser único POR COMPAÑÍA (puede repetirse entre compañías distintas).
     key = {"folio": body.folio, "company_id": body.company_id}
     # LIVE = not soft-deleted; a deleted row is never reused nor matched.
@@ -59,8 +72,8 @@ def handler(event, context):
         "tires_catalog_id": body.tires_catalog_id,
         "unit_id": body.unit_id,
         "sensor_id": body.sensor_id,
-        "current_depth": body.current_depth,
-        "tire_mileage": body.tire_mileage,
+        "current_depth": current_depth,
+        "tire_mileage": tire_mileage,
         "is_mounted": body.is_mounted,
         "mount_position": body.mount_position,
         "axle_index": body.axle_index,
@@ -130,8 +143,8 @@ def handler(event, context):
                 "tyreBrandId": TYRE_BRAND_ID,
                 "tyreSizeId": TYRE_SIZE_ID,
                 "tyrePattern": TYRE_PATTERN,
-                "initialTreadDepth": str(body.current_depth or 0),
-                "totalDistance": body.tire_mileage or 0,
+                "initialTreadDepth": str(current_depth or 0),
+                "totalDistance": tire_mileage or 0,
             },
             assume_new=True,
         )

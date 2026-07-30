@@ -1,4 +1,5 @@
 import json
+import os
 
 from pydantic import BaseModel, ValidationError, field_validator
 
@@ -14,6 +15,10 @@ from shared.utils.validators import validate_hex12
 
 # Default firmware version sent to the platform (legacy default). Not stored locally.
 SENSOR_VERSION = "404"
+
+# New sensors default to the provider/build company (id 2) when no company_id is
+# given, so a fresh sensor is never left without an owner. Configurable by env.
+DEFAULT_SENSOR_COMPANY_ID = int(os.environ.get("DEFAULT_SENSOR_COMPANY_ID", "2"))
 
 
 class CreateSensorRequest(BaseModel):
@@ -36,6 +41,8 @@ def handler(event, context):
         return error(422, e.errors())
 
     db = get_db()
+    # No company_id given -> the sensor is born under the provider/build company.
+    company_id = body.company_id if body.company_id is not None else DEFAULT_SENSOR_COMPANY_ID
 
     # 2. Local-first with idempotency: insert `registering` (or resume a LIVE one).
     #    A soft-deleted row (is_deleted=1) is NEVER reused nor matched. sensorCode is
@@ -52,7 +59,7 @@ def handler(event, context):
             try:
                 rec = insert(db, t("sensors"), {
                     "sensorCode": body.sensor_code,
-                    "company_id": body.company_id,
+                    "company_id": company_id,
                     "status": "registering",
                     "updated_at": now_ms(),
                 })
@@ -72,7 +79,7 @@ def handler(event, context):
                     db.commit()
                     rec = insert(db, t("sensors"), {
                         "sensorCode": body.sensor_code,
-                        "company_id": body.company_id,
+                        "company_id": company_id,
                         "status": "registering",
                         "updated_at": now_ms(),
                     })
@@ -103,11 +110,11 @@ def handler(event, context):
         )
     except SmartTyreNotResolved:
         audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
-              natural_key=body.sensor_code, company_id=body.company_id, result="pending")
+              natural_key=body.sensor_code, company_id=company_id, result="pending")
         return pending(get_by_id(db, t("sensors"), local_id))
     except Exception as e:
         audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
-              natural_key=body.sensor_code, company_id=body.company_id, result="pending", error=str(e))
+              natural_key=body.sensor_code, company_id=company_id, result="pending", error=str(e))
         return pending({"id": local_id, "sensorCode": body.sensor_code, "reason": str(e)})
 
     # 4. Confirm the match and activate.
@@ -119,7 +126,7 @@ def handler(event, context):
         })
         db.commit()
         audit(db, event, context, action="create", asset_type="sensor", asset_id=local_id,
-              natural_key=body.sensor_code, company_id=body.company_id,
+              natural_key=body.sensor_code, company_id=company_id,
               daijin_id=daijin_id, result="success")
         return ok(rec)
     except Exception as e:
