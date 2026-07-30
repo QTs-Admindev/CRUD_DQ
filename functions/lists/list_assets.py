@@ -25,11 +25,11 @@ RESOURCES = {
         "prefixed": True, "soft": True, "by_company": True,
     },
     "sensors": {
-        "columns": "id, sensorCode, company_id, daijin_id, status",
+        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position",
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tboxes": {
-        "columns": "id, tboxCode, version, company_id, daijin_id, status",
+        "columns": "id, tboxCode, version, company_id, daijin_id, status, package_id",
         "prefixed": True, "soft": True, "by_company": True,
     },
     # Catálogos / referencia (tablas reales, solo lectura, sin soft-delete).

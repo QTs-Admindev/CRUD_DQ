@@ -35,11 +35,18 @@ class FakeStore:
         r = self.rows.get(rid)
         return dict(r) if r else None
 
-    def get_by_fields(self, db, table, filters):
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # El handler busca por (unit_identifier, company_id, unit_catalog_id) en dos
+        # variantes: filas VIVAS (live_sql) o soft-borradas (dead_sql, "is_deleted = 1").
+        ident, cid, cat = params
+        want_deleted = "is_deleted = 1" in where_sql
+        out = []
         for r in self.rows.values():
-            if all(r.get(k) == v for k, v in filters.items()):
-                return dict(r)
-        return None
+            if (r.get("unit_identifier") == ident and r.get("company_id") == cid
+                    and r.get("unit_catalog_id") == cat
+                    and bool(r.get("is_deleted")) == want_deleted):
+                out.append(dict(r))
+        return out[:limit]
 
 
 class FakeSmartTyre:
@@ -74,7 +81,7 @@ def wire(monkeypatch):
         monkeypatch.setattr(mod, "insert", store.insert)
         monkeypatch.setattr(mod, "update", store.update)
         monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
-        monkeypatch.setattr(mod, "get_by_fields", store.get_by_fields)
+        monkeypatch.setattr(mod, "get_where", store.get_where)
         monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
         return store, db
 
@@ -127,9 +134,11 @@ def test_dajin_down_returns_pending(wire):
     store, db = wire(st)
     resp = mod.handler(_event(), None)
     assert resp["statusCode"] == 202
-    row = store.get_by_fields(db, "test_units",
-                              {"unit_identifier": "3MA0074S", "company_id": 100,
-                               "unit_catalog_id": 5})
+    rows = store.get_where(db, "test_units",
+                           "unit_identifier = %s AND company_id = %s AND "
+                           "unit_catalog_id = %s AND (is_deleted IS NULL OR is_deleted = 0)",
+                           ["3MA0074S", 100, 5])
+    row = rows[0]
     assert row["status"] == "registering"
     assert row.get("daijin_id") is None
 

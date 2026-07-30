@@ -41,6 +41,13 @@ class FakeStore:
                 return dict(r)
         return None
 
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # live_sql del handler: tboxCode = %s AND (is_deleted IS NULL OR is_deleted = 0)
+        code = params[0]
+        out = [dict(r) for r in self.rows.values()
+               if r.get("tboxCode") == code and not r.get("is_deleted")]
+        return out[:limit]
+
 
 class FakeSmartTyre:
     def __init__(self, existing=None, after=None, fail=False):
@@ -74,6 +81,7 @@ def wire(monkeypatch):
         monkeypatch.setattr(mod, "update", store.update)
         monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
         monkeypatch.setattr(mod, "get_by_field", store.get_by_field)
+        monkeypatch.setattr(mod, "get_where", store.get_where)
         monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
         return store, db
 

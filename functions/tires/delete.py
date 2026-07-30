@@ -1,11 +1,113 @@
+import re
+
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, soft_delete, update
+from shared.db.ops import get_by_id, get_where, soft_delete, update
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete
-from shared.smarttyre.client import SmartTyreClient
+from shared.smarttyre.client import SmartTyreClient, SmartTyreError
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending_delete
+
+from functions.packages.layout import tire_slots
+
+# Folio de una llanta genérica de paquete: PKG{package_id}-{mount_position}.
+_PKG_FOLIO = re.compile(r"^PKG(\d+)-(\d+)$")
+
+# Sentinela interna: una llamada a la plataforma falló de forma TRANSITORIA (red/5xx)
+# durante la recuperación. El handler responde 502 (reintentable) sin tocar lo local.
+_NET_FAIL = "__net__"
+
+
+def _recover_package_platform(db, rid, daijin_id, m):
+    """Recupera el estado de la plataforma desde el paquete y lo limpia.
+
+    Contexto de la divergencia: la llanta ya está LIMPIA en local (desmontada y sin
+    sensor), pero en LA PLATAFORMA sigue montada en su vehículo CON su sensor. Por eso
+    el borrado remoto rechaza (guard 531 "llanta con sensor") y, como local ya no tiene
+    el vehicleId, no hay forma de desvincular el sensor "en frío". La solución es
+    RECONSTRUIR el vehículo/sensor/posición desde el paquete que armó esta llanta
+    genérica y limpiar la plataforma antes de reintentar el borrado.
+
+    Devuelve (status, msg) del re-intento de borrado remoto, o (_NET_FAIL, msg) si una
+    llamada a la plataforma falló de forma transitoria (el handler responde 502).
+    """
+    pid = int(m.group(1))
+    pos = int(m.group(2))
+
+    # Reconstruir el contexto de la plataforma a partir del paquete.
+    pkg = get_by_id(db, t("packages"), pid)
+    unit = get_by_id(db, t("units"), pkg.get("unit_id")) if pkg and pkg.get("unit_id") else None
+    vehicle_id = unit.get("daijin_id") if unit else None
+
+    # El sensor de esta posición (por el mount_position que selló el create del paquete).
+    sensors = get_where(db, t("sensors"), "package_id = %s", [pid])
+    sensor = next((s for s in sensors if s.get("mount_position") == pos), None)
+    sensor_code = sensor.get("sensorCode") if sensor else None
+    sensor_daijin = sensor.get("daijin_id") if sensor else None
+
+    # axle/wheel de esta posición según el layout del unit_catalog del paquete.
+    catalog = get_by_id(db, "unit_catalog", pkg.get("unit_catalog_id")) if pkg else None
+    slot = next((s for s in tire_slots(catalog) if s["mount_position"] == pos), None) if catalog else None
+    axle = slot["axle_index"] if slot else None
+    wheel = slot["wheel_index"] if slot else None
+
+    st = SmartTyreClient()
+
+    # 1) Liberar el sensor en la plataforma. El sensor SOBREVIVE, solo se desvincula.
+    #    Un rechazo de negocio (SmartTyreError) significa "ya estaba desvinculado":
+    #    ese es justo el estado que buscamos, así que se tolera. Un fallo de red sí
+    #    aborta (502, reintentable) para no dejar medio-estado.
+    try:
+        st.post("/smartyre/openapi/tyre/sensor/unbind", {
+            "tyreCode": str(rid),
+            "vehicleId": vehicle_id,
+            "axleIndex": axle,
+            "wheelIndex": wheel,
+            "sensorCode": sensor_code,
+        })
+    except SmartTyreError:
+        pass  # ya desvinculado en la plataforma: estado deseado
+    except Exception as e:
+        return (_NET_FAIL, str(e))
+
+    # 2) Desmontar la llanta en la plataforma. Igual: rechazo de negocio = "ya estaba
+    #    desmontada" (se tolera); fallo de red aborta con 502.
+    try:
+        st.post("/smartyre/openapi/vehicle/tyre/unbind", {
+            "vehicleId": vehicle_id,
+            "tyreCode": str(rid),
+        })
+    except SmartTyreError:
+        pass  # ya desmontada en la plataforma: estado deseado
+    except Exception as e:
+        return (_NET_FAIL, str(e))
+
+    # 3) La plataforma quedó limpia: reintentar el borrado remoto.
+    status, msg = attempt_delete("tyre", str(daijin_id))
+    if status != GUARD:
+        return (status, msg)
+
+    # 4) Sigue en GUARD: el desvinculado "en frío" no bastó porque el vehículo del
+    #    paquete ya no existe (unidad borrada, sin daijin_id) -> el sensor no se pudo
+    #    soltar por falta de vehicleId. HUÉRFANO real: la única forma de liberar la
+    #    llanta es BORRAR el sensor en la plataforma. El sensor local SOBREVIVE (queda
+    #    en inventario); solo se limpia su daijin_id para que vuelva a sincronizar como
+    #    nuevo cuando se reutilice. Luego se reintenta el borrado de la llanta.
+    if sensor_daijin:
+        s_status, _ = attempt_delete("sensor", str(sensor_daijin))
+        if s_status == TRANSIENT:
+            return (_NET_FAIL, "no se pudo liberar el sensor huérfano (transitorio)")
+        # DONE o GUARD (p. ej. "ya no existe"): el sensor ya no bloquea. Limpiar el
+        # vínculo local del sensor (sobrevive sin daijin_id).
+        try:
+            update(db, t("sensors"), sensor["id"], {"daijin_id": None, "updated_at": now_ms()})
+            db.commit()
+        except Exception:
+            db.rollback()
+        status, msg = attempt_delete("tyre", str(daijin_id))
+
+    return (status, msg)
 
 
 def handler(event, context):
@@ -41,8 +143,20 @@ def handler(event, context):
                 "wheelIndex": rec.get("wheel_index"),
                 "sensorCode": sensor.get("sensorCode") if sensor else None,
             })
-        except Exception:
-            return error(502, "No se pudo liberar el sensor, intenta de nuevo")
+        except Exception as e:
+            # Una llanta ALMACENADA puede conservar su sensor (regla de negocio),
+            # pero en la plataforma la cadena vehículo-llanta-sensor ya se disolvió
+            # al desmontarla: el unbind remoto sin vehicleId no tiene contexto y
+            # Dajin lo rechaza. En ese caso el unbind es solo higiene: se libera
+            # el sensor localmente y el borrado continúa. Si la llanta sigue
+            # MONTADA, el rechazo es real y aborta como antes.
+            if rec.get("unit_id"):
+                return error(502, "No se pudo liberar el sensor, intenta de nuevo")
+            audit(db, event, context, action="unbind", asset_type="sensor",
+                  asset_id=rec["sensor_id"],
+                  natural_key=sensor.get("sensorCode") if sensor else None,
+                  company_id=rec.get("company_id"), result="pending",
+                  error=f"unbind remoto rechazado (llanta almacenada): {e}")
         try:
             update(db, t("tires"), rid, {"sensor_id": None, "updated_at": now_ms()})
             db.commit()
@@ -76,7 +190,21 @@ def handler(event, context):
     if daijin_id:
         status, msg = attempt_delete("tyre", str(daijin_id))
         if status == GUARD:
-            return error(409, "No se pudo completar el borrado")
+            # La plataforma rechaza el borrado (llanta aún con sensor/vehículo allá,
+            # aunque local ya esté limpia). Para una llanta genérica de paquete
+            # (folio PKG{pid}-{pos}) reconstruimos el vehículo/sensor desde el paquete,
+            # limpiamos la plataforma y reintentamos. Para el resto, se aborta igual.
+            m = _PKG_FOLIO.match(rec.get("folio") or "")
+            if m:
+                status, msg = _recover_package_platform(db, rid, daijin_id, m)
+                if status == _NET_FAIL:
+                    # Fallo transitorio de la plataforma al limpiar: reintentable.
+                    # NO se hace soft-delete -> nunca dejamos medio-estado.
+                    return error(502, "No se pudo limpiar la plataforma, intenta de nuevo")
+            if status == GUARD:
+                # Sigue rechazando (o no es llanta de paquete): NO borrar en local
+                # para no quedar en medio-estado (local borrado, plataforma viva).
+                return error(409, "No se pudo completar el borrado")
     else:
         status, msg = DONE, None
 
