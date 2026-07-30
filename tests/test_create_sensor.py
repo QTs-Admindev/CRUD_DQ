@@ -43,6 +43,12 @@ class FakeStore:
                 return dict(r)
         return None
 
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # sensor create looks up a LIVE row by sensorCode (params[0]).
+        code = params[0]
+        return [dict(r) for r in self.rows.values()
+                if r.get("sensorCode") == code and not r.get("is_deleted")]
+
 
 class FakeSmartTyre:
     def __init__(self, existing=None, after=None, fail=False):
@@ -76,6 +82,7 @@ def wire(monkeypatch):
         monkeypatch.setattr(mod, "update", store.update)
         monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
         monkeypatch.setattr(mod, "get_by_field", store.get_by_field)
+        monkeypatch.setattr(mod, "get_where", store.get_where)
         monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
         return store, db
 
@@ -140,6 +147,25 @@ def test_dajin_down_returns_pending_and_stays_registering(wire):
     row = store.get_by_field(db, "sensors", "sensorCode", "A4C13873C3E6")
     assert row["status"] == "registering"
     assert row.get("daijin_id") is None
+
+
+def test_defaults_to_provider_company_when_omitted(wire):
+    # No company_id given -> sensor is born under DEFAULT_SENSOR_COMPANY_ID (2).
+    st = FakeSmartTyre(existing=[], after=[{"id": 424242}])
+    store, db = wire(st)
+    resp = mod.handler({"body": json.dumps({"sensor_code": "A4C13873C3E6"})}, None)
+    assert resp["statusCode"] == 200
+    row = store.get_by_field(db, "sensors", "sensorCode", "A4C13873C3E6")
+    assert row["company_id"] == mod.DEFAULT_SENSOR_COMPANY_ID == 2
+
+
+def test_explicit_company_id_is_respected(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 1}])
+    store, db = wire(st)
+    resp = mod.handler(_event(company=777), None)
+    assert resp["statusCode"] == 200
+    row = store.get_by_field(db, "sensors", "sensorCode", "A4C13873C3E6")
+    assert row["company_id"] == 777
 
 
 def test_invalid_sensor_code_returns_422(wire):

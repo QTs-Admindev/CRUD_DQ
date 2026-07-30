@@ -18,10 +18,6 @@ class FakeDB:
 
 
 class FakeStore:
-    def __init__(self):
-        self.rows = {}
-        self.seq = 0
-
     def insert(self, db, table, data):
         self.seq += 1
         self.rows[self.seq] = {"id": self.seq, **data}
@@ -31,7 +27,16 @@ class FakeStore:
         self.rows[rid].update(data)
         return dict(self.rows[rid])
 
+    def __init__(self):
+        self.rows = {}
+        self.seq = 0
+        # Reference catalog rows (real, non-prefixed table) keyed by id.
+        self.catalog = {209: {"id": 209, "brand": "X", "model": "Y"}}
+
     def get_by_id(self, db, table, rid):
+        if table == "tires_catalog":
+            r = self.catalog.get(rid)
+            return dict(r) if r else None
         r = self.rows.get(rid)
         return dict(r) if r else None
 
@@ -40,6 +45,13 @@ class FakeStore:
             if all(r.get(k) == v for k, v in filters.items()):
                 return dict(r)
         return None
+
+    def get_where(self, db, table, where_sql, params=(), limit=200):
+        # tire create looks up a LIVE row by (folio, company_id).
+        folio, company_id = params[0], params[1]
+        return [dict(r) for r in self.rows.values()
+                if r.get("folio") == folio and r.get("company_id") == company_id
+                and not r.get("is_deleted")]
 
 
 class FakeSmartTyre:
@@ -73,6 +85,7 @@ def wire(monkeypatch):
         monkeypatch.setattr(mod, "update", store.update)
         monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
         monkeypatch.setattr(mod, "get_by_fields", store.get_by_fields)
+        monkeypatch.setattr(mod, "get_where", store.get_where)
         monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
         return store, db
 
@@ -147,6 +160,25 @@ def test_duplicate_folio_same_company_different_prefix_409(wire):
                      "daijin_id": 1, "status": "new"}
     resp = mod.handler(_event(prefix="BBB", folio="9001", company=100), None)
     assert resp["statusCode"] == 409
+    assert st.posts == []
+
+
+def test_null_current_depth_treated_as_zero(wire):
+    # FE may send null depth/mileage; must not 422, should be stored as 0.
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(current_depth=None, tire_mileage=None), None)
+    assert resp["statusCode"] == 200
+    data = _body(resp)
+    assert store.rows[data["id"]]["current_depth"] == 0
+    assert store.rows[data["id"]]["tire_mileage"] == 0
+
+
+def test_missing_catalog_returns_422(wire):
+    st = FakeSmartTyre(after=[{"id": 1}])
+    store, db = wire(st)
+    resp = mod.handler(_event(catalog=999999), None)  # not in tires_catalog
+    assert resp["statusCode"] == 422
     assert st.posts == []
 
 

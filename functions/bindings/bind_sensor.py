@@ -45,6 +45,10 @@ def handler(event, context):
     sensor = get_by_id(db, t("sensors"), body.sensor_id)
     if not sensor:
         return error(404, "Sensor no encontrado")
+    if not sensor.get("daijin_id"):
+        return error(409, "El sensor aún no está listo")
+    if sensor.get("company_id") != tire.get("company_id"):
+        return error(409, "El sensor es de otra compañía; asígnalo a la compañía de la unidad primero")
 
     axle = body.axle_index if body.axle_index is not None else tire.get("axle_index")
     wheel = body.wheel_index if body.wheel_index is not None else tire.get("wheel_index")
