@@ -68,6 +68,11 @@ def _reinvoke(ids: list[int], pass_num: int, actor: str) -> bool:
 
 def _sync_one(st, row):
     """Resolve one Qbox against the platform. Returns (id, daijin_id | None, error)."""
+    # Recuperación: si la fila sigue 'registering' pero YA tiene daijin_id, es que
+    # se registró en la plataforma y solo falló el flip local a 'active'. No la
+    # volvemos a registrar; devolvemos su daijin_id para activarla localmente.
+    if row.get("daijin_id"):
+        return row["id"], row["daijin_id"], None
     try:
         daijin_id = resolve_or_create(
             st,
@@ -95,7 +100,6 @@ def handler(event, context):
         r for r in get_in(db, t("tboxes"), "id", ids)
         if r.get("status") == "registering"
         and not r.get("is_deleted")
-        and not r.get("daijin_id")
     ]
     if not rows:
         return {"status": "ok", "resolved": 0, "pending": 0}
