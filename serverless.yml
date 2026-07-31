@@ -237,6 +237,18 @@ functions:
           method: post
           cors: true
 
+  # Reintento de sincronización de sensores atascados en 'registering': re-dispara
+  # el worker para esas filas (mismo worker que el bulk). No toca la plataforma.
+  resyncSensors:
+    handler: functions/sensors/resync.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-sensorsBulkSyncWorker
+    events:
+      - http:
+          path: /sensors/resync
+          method: post
+          cors: true
+
   # Worker del bulk: sin API Gateway (sin tope de 29 s). Se auto-encadena si se
   # queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
   # ids de su lote — NO es la reconciliación y no ve filas viejas.
@@ -266,6 +278,18 @@ functions:
     events:
       - http:
           path: /tboxes/bulk/status
+          method: post
+          cors: true
+
+  # Reintento de sincronización de Qboxes atascados en 'registering': re-dispara
+  # el worker para esas filas (mismo worker que el bulk). No toca la plataforma.
+  resyncTboxes:
+    handler: functions/tboxes/resync.handler
+    environment:
+      BULK_SYNC_FUNCTION: ${self:service}-${sls:stage}-tboxesBulkSyncWorker
+    events:
+      - http:
+          path: /tboxes/resync
           method: post
           cors: true
 
