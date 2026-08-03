@@ -105,7 +105,13 @@ def handler(event, context):
     if daijin_id:
         status, msg = attempt_delete("vehicle", str(daijin_id))
         if status == GUARD:
-            return error(409, "No se pudo completar el borrado")
+            # Rechazo de negocio: casi siempre la unidad todavía tiene una llanta o
+            # un Qbox vinculado. Se lo decimos al operador en vez de un genérico.
+            return error(
+                409,
+                "No se pudo borrar la unidad: puede tener una llanta o un Qbox "
+                "aún vinculado. Desvincúlalos e intenta de nuevo.",
+            )
     else:
         status, msg = DONE, None  # nunca sincronizó -> nada remoto que borrar
 

@@ -83,21 +83,23 @@ def handler(event, context):
                 local_id = rec["id"]
             except Exception:
                 db.rollback()
-                # units has a UNIQUE on (unit_identifier, company_id, unit_catalog_id).
-                # A soft-deleted row may hold it: don't reuse that dead row (it stays
-                # deleted, as history), but free its key so the unit can be re-created,
-                # then insert a fresh row.
-                dead_sql = (
-                    "unit_identifier = %s AND company_id = %s AND unit_catalog_id = %s "
-                    "AND is_deleted = 1"
+                # A soft-deleted row may still hold the UNIQUE key and block the
+                # re-alta. Free EVERY dead row with this (identifier, company) — not
+                # only the same type — so re-creating with ANY type works, regardless
+                # of which columns the UNIQUE spans. Dead rows stay deleted (history);
+                # they only release the name. (Same idea as the tire re-alta by
+                # folio+company.)
+                dead_sql = "unit_identifier = %s AND company_id = %s AND is_deleted = 1"
+                dead_rows = get_where(
+                    db, t("units"), dead_sql,
+                    [body.unit_identifier, body.company_id], 1000,
                 )
-                dead_rows = get_where(db, t("units"), dead_sql, key_vals, 1)
-                dead = dead_rows[0] if dead_rows else None
-                if dead:
-                    update(db, t("units"), dead["id"], {
-                        "unit_identifier": f"{body.unit_identifier}__del{dead['id']}",
-                        "updated_at": now_ms(),
-                    })
+                if dead_rows:
+                    for dead in dead_rows:
+                        update(db, t("units"), dead["id"], {
+                            "unit_identifier": f"{body.unit_identifier}__del{dead['id']}",
+                            "updated_at": now_ms(),
+                        })
                     db.commit()
                     rec = insert(db, t("units"), {
                         "unit_identifier": body.unit_identifier,
