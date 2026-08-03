@@ -91,7 +91,8 @@ def test_resolves_whole_batch(wire):
 
 def test_skips_rows_already_active_or_deleted(wire):
     rows = _rows(3)
-    rows[0]["daijin_id"] = "99"          # already synced
+    rows[0]["status"] = "active"         # already active -> el filtro la excluye
+    rows[0]["daijin_id"] = "99"
     rows[1]["is_deleted"] = 1            # deleted while queued
     store, reinvokes, ctx = wire(rows, FakeSmartTyre())
 
@@ -99,6 +100,29 @@ def test_skips_rows_already_active_or_deleted(wire):
 
     assert out["resolved"] == 1
     assert store.rows[1]["daijin_id"] == "99"  # untouched
+
+
+def test_recovers_registering_row_with_daijin_id_without_platform_call(wire):
+    # Limbo: la fila quedó 'registering' pero YA tiene daijin_id (el flip local a
+    # 'active' falló en su momento). Debe activarse SIN volver a llamar a la
+    # plataforma; antes el filtro la excluía y quedaba atascada para siempre.
+    class Boom:
+        def get(self, *a, **k):
+            raise AssertionError("no debe llamar a la plataforma para filas ya registradas")
+
+        def post(self, *a, **k):
+            raise AssertionError("no debe llamar a la plataforma para filas ya registradas")
+
+    rows = _rows(1)
+    rows[0]["daijin_id"] = "555"
+    store, reinvokes, ctx = wire(rows, Boom())
+
+    out = mod.handler({"ids": [1]}, ctx)
+
+    assert out["resolved"] == 1
+    assert store.rows[1]["status"] == "active"
+    assert store.rows[1]["daijin_id"] == "555"
+    assert reinvokes == []
 
 
 def test_failed_rows_are_retried_as_next_pass(wire):
