@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
+from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -93,7 +94,22 @@ def handler(event, context):
         if existing and existing.get("prefix") != body.prefix:
             return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
         if existing and existing.get("daijin_id"):
-            return ok(existing)
+            # Self-heal: verify the stored daijin_id still resolves in the platform; re-create
+            # upstream (tyreCode == our local id) if it is a phantom.
+            return heal_on_resume(
+                db, event, context, existing=existing, asset_type="tire", table="tires",
+                natural_key=body.folio,
+                list_path="/smartyre/openapi/tyre/list",
+                list_filter={"tyreCode": str(existing["id"])},
+                insert_path="/smartyre/openapi/tyre/insert",
+                insert_payload={
+                    "tyreCode": str(existing["id"]),
+                    "tyreBrandId": TYRE_BRAND_ID,
+                    "tyreSizeId": TYRE_SIZE_ID,
+                    "tyrePattern": TYRE_PATTERN,
+                    "initialTreadDepth": str(existing.get("current_depth") or 0),
+                    "totalDistance": existing.get("tire_mileage") or 0,
+                })
         if existing:
             local_id = existing["id"]
         else:
