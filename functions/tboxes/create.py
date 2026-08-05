@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_field, get_by_id, get_where, insert, update
+from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -42,7 +43,13 @@ def handler(event, context):
         rows = get_where(db, t("tboxes"), live_sql, [body.tbox_code], 1)
         existing = rows[0] if rows else None
         if existing and existing.get("daijin_id"):
-            return ok(existing)
+            # Self-heal: verify the stored daijin_id still resolves in Dajin; if it is
+            # a phantom, re-create upstream so both systems stay consistent.
+            return heal_on_resume(
+                db, event, context, existing=existing, asset_type="tbox", table="tboxes",
+                natural_key=body.tbox_code,
+                list_path="/smartyre/openapi/tbox/list", list_filter={"tboxCode": body.tbox_code},
+                insert_path="/smartyre/openapi/tbox/insert", insert_payload={"tboxCode": body.tbox_code})
         if existing:
             local_id = existing["id"]
         else:
