@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_field, get_by_id, get_where, insert, update
+from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -45,7 +46,14 @@ def handler(event, context):
         rows = get_where(db, t("sensors"), live_sql, [body.sensor_code], 1)
         existing = rows[0] if rows else None
         if existing and existing.get("daijin_id"):
-            return ok(existing)  # already synced
+            # Self-heal: verify the stored daijin_id still resolves in Dajin; re-create
+            # upstream if it is a phantom, so both systems stay consistent.
+            return heal_on_resume(
+                db, event, context, existing=existing, asset_type="sensor", table="sensors",
+                natural_key=body.sensor_code,
+                list_path="/smartyre/openapi/sensor/list", list_filter={"sensorCode": body.sensor_code},
+                insert_path="/smartyre/openapi/sensor/insert",
+                insert_payload={"sensorCode": body.sensor_code, "version": SENSOR_VERSION})
         if existing:
             local_id = existing["id"]  # resume a half-finished (live) registration
         else:
