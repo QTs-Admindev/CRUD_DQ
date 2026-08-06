@@ -66,12 +66,17 @@ def handler(event, context):
     # 2. Local-first. Business rule: a soft-deleted row is NEVER reused nor matched.
     #    Duplicates are checked only against LIVE rows; a re-alta inserts a fresh row
     #    (a previously deleted unit with the same key is ignored entirely).
+    # resumed = picked up an existing (registering) row rather than a fresh insert. On the
+    # resume path the platform vehicle may already be mid-insert by a racer, so step 4 does a
+    # confirming GET-before-POST (assume_new=False) instead of blindly inserting a duplicate.
+    resumed = False
     try:
         existing = _live_unit()
         if existing:
             if existing.get("daijin_id"):
                 return error(409, DUP_MSG)   # completed alta -> duplicate
             local_id = existing["id"]         # half-done (registering) -> resume
+            resumed = True
         else:
             try:
                 rec = insert(db, t("units"), {
@@ -118,6 +123,7 @@ def handler(event, context):
                     if existing.get("daijin_id"):
                         return error(409, DUP_MSG)
                     local_id = existing["id"]
+                    resumed = True
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (insert unit): {e}")
@@ -148,7 +154,9 @@ def handler(event, context):
             list_filter={"licensePlateNumber": str(local_id)},
             insert_path="/smartyre/openapi/vehicle/insert",
             insert_payload=payload,
-            assume_new=True,
+            # Nuevo -> assume_new (licensePlateNumber = id local nuevo, no preexiste).
+            # Resume -> GET-before-POST para no duplicar el vehículo upstream en carrera.
+            assume_new=not resumed,
         )
     except SmartTyreNotResolved:
         audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
