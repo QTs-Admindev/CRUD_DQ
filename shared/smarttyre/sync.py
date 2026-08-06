@@ -59,3 +59,41 @@ def resolve_or_create(st, *, list_path, list_filter, insert_path, insert_payload
             return found
 
     raise SmartTyreNotResolved(list_filter)
+
+
+def resolve_or_heal(st, *, stored_id, list_path, list_filter, insert_path,
+                    insert_payload, backoff=DEFAULT_BACKOFF):
+    """Self-heal a record that ALREADY claims a `stored_id`.
+
+    A create can hit an existing local row that is `active` with a `daijin_id`.
+    Historically we returned it as-is — but that id can be a PHANTOM: the row was
+    marked synced, yet the asset no longer exists in Dajin (deleted upstream, or
+    the sync half-finished). This verifies against Dajin by the natural key and,
+    if it truly doesn't resolve, re-creates it, so creation always leaves BOTH
+    systems consistent.
+
+    A single empty list read is NOT treated as proof of deletion: Dajin is
+    eventually consistent, and a transient empty/filtered/rate-limited-but-200
+    response looks identical to a real delete. We retry the read across the
+    backoff before concluding the asset is gone, and the re-create always does a
+    confirming GET-before-POST (never `assume_new`) — in the heal path the asset
+    is *expected* to exist, so this prevents re-creating a duplicate.
+
+    Returns (daijin_id, changed): `changed` is True when the authoritative id
+    differs from `stored_id` (caller should persist it + audit as a reconcile).
+    """
+    found = _find_id(st, list_path, list_filter)
+    if found is None:
+        for wait in backoff:
+            time.sleep(wait)
+            found = _find_id(st, list_path, list_filter)
+            if found is not None:
+                break
+    if found is None:
+        # Confirmed absent across retries -> re-create with GET-before-POST.
+        found = resolve_or_create(
+            st, list_path=list_path, list_filter=list_filter,
+            insert_path=insert_path, insert_payload=insert_payload,
+            assume_new=False, backoff=backoff,
+        )
+    return found, str(found) != str(stored_id)
