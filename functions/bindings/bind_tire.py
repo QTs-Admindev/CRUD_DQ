@@ -7,9 +7,10 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending
 
 
 class BindTireRequest(BaseModel):
@@ -71,6 +72,10 @@ def handler(event, context):
     except Exception as e:
         return error(502, "No se pudo completar la vinculación de la llanta, intenta de nuevo")
 
+    # Confirmar por read-back que la llanta REALMENTE quedó montada en el vehículo en la
+    # plataforma. Un 200 no basta: sin esto grabaríamos un falso éxito de montaje.
+    confirmed = verify.tyre_on_vehicle(st, tyre_code=body.tire_id, plate=unit_id)
+
     # Local: reflejar la relación llanta -> unidad.
     try:
         rec = update(db, t("tires"), body.tire_id, {
@@ -84,8 +89,10 @@ def handler(event, context):
         db.commit()
         audit(db, event, context, action="bind", asset_type="tire", asset_id=body.tire_id,
               natural_key=tire.get("folio"), company_id=tire.get("company_id"),
-              daijin_id=tire.get("daijin_id"), result="success",
-              changes={"unit_id": unit_id, "mount_position": body.mount_position})
+              daijin_id=tire.get("daijin_id"),
+              result=("success" if confirmed else "pending"),
+              changes={"unit_id": unit_id, "mount_position": body.mount_position},
+              error=(None if confirmed else "montaje de llanta no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (bind tire local): {e}")
@@ -106,10 +113,15 @@ def handler(event, context):
                     sensor_code=sensor["sensorCode"],
                     vehicle_id=unit["daijin_id"],
                 )
+                # Verificar por read-back que el sensor diferido quedó realmente asociado.
+                sensor_ok = verify.sensor_on_tyre(
+                    st, sensor_code=sensor["sensorCode"], tyre_code=body.tire_id)
                 audit(db, event, context, action="bind", asset_type="sensor",
                       asset_id=tire["sensor_id"], natural_key=sensor.get("sensorCode"),
                       company_id=sensor.get("company_id"), daijin_id=sensor.get("daijin_id"),
-                      result="success", changes={"tire_id": body.tire_id, "synced_on_mount": True})
+                      result=("success" if sensor_ok else "pending"),
+                      changes={"tire_id": body.tire_id, "synced_on_mount": sensor_ok},
+                      error=(None if sensor_ok else "sync diferido de sensor no confirmado en la plataforma; el reconciliador lo reintentará"))
             except Exception as e:
                 audit(db, event, context, action="bind", asset_type="sensor",
                       asset_id=tire["sensor_id"], natural_key=sensor.get("sensorCode"),
@@ -117,4 +129,7 @@ def handler(event, context):
                       result="pending", changes={"tire_id": body.tire_id},
                       error=f"deferred sensor sync on mount failed: {e}")
 
-    return ok(rec)
+    if confirmed:
+        return ok(rec)
+    return pending({**rec, "sync_pending":
+                    "el montaje aún no se confirma en la plataforma; queda pendiente de reintentar"})

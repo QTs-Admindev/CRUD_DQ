@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, insert, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
@@ -214,7 +215,11 @@ def handler(event, context):
             return pending({**rec,
                             "tbox_bind_pending": "no se pudo vincular el Qbox en la plataforma; queda pendiente de reintentar"})
 
-        # Platform confirmed the link -> now it's safe to record it locally.
+        # A 200 from vehicle/update does NOT prove the Qbox bound (it can be a phantom or a
+        # no-op). Confirm by read-back before recording the link, so we never report a bind
+        # the platform doesn't actually have. If unconfirmed we still record the intended
+        # link locally (so the reconciler can find and complete it) but answer `pending`.
+        confirmed = verify.tbox_bound(st, plate=local_id, tbox_code=tbox["tboxCode"])
         try:
             rec = update(db, t("units"), local_id, {"tbox_id": body.tbox_id, "updated_at": now_ms()})
             db.commit()
@@ -223,5 +228,13 @@ def handler(event, context):
             # The platform has the link but the local write failed -> report it (not a
             # silent success) so it gets reconciled/re-synced.
             return error(500, f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
+
+        if not confirmed:
+            audit(db, event, context, action="bind", asset_type="tbox", asset_id=body.tbox_id,
+                  natural_key=tbox.get("tboxCode"), company_id=body.company_id,
+                  daijin_id=tbox.get("daijin_id"), result="pending",
+                  error="qbox bind not confirmed on the platform; reconciler will retry")
+            return pending({**rec,
+                            "tbox_bind_pending": "el Qbox aún no se confirma montado en la plataforma; queda pendiente de reintentar"})
 
     return ok(rec)

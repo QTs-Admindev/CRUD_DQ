@@ -4,9 +4,10 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending
 from functions.vehicles.create import _dajin_type
 
 
@@ -46,13 +47,22 @@ def handler(event, context):
     except Exception as e:
         return error(502, "No se pudo quitar el Qbox, intenta de nuevo")
 
+    # Confirmar por read-back que el vehículo REALMENTE quedó sin Qbox en la plataforma.
+    confirmed = verify.tbox_unbound(st, plate=unit_id)
+    prev_tbox_id = unit.get("tbox_id")
+
     try:
         rec = update(db, t("units"), unit_id, {"tbox_id": None, "updated_at": now_ms()})
         db.commit()
         audit(db, event, context, action="unbind", asset_type="tbox",
-              asset_id=unit.get("tbox_id"), company_id=unit.get("company_id"),
-              result="success", changes={"unit_id": None})
-        return ok(rec)
+              asset_id=prev_tbox_id, company_id=unit.get("company_id"),
+              result=("success" if confirmed else "pending"), changes={"unit_id": None},
+              error=(None if confirmed else "unbind de Qbox no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (quitar tbox local): {e}")
+
+    if confirmed:
+        return ok(rec)
+    return pending({**rec, "sync_pending":
+                    "el Qbox aún se ve montado en la plataforma; queda pendiente de reintentar"})

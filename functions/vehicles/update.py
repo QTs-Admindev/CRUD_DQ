@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
@@ -87,6 +88,18 @@ def handler(event, context):
                 })
             except Exception:
                 return error(502, "No se pudo actualizar la unidad, intenta de nuevo")
+
+            # vehicle/update reenvía el tboxCode para preservar el Qbox; confirmar por
+            # read-back que no se soltó. Si se soltó, se audita pendiente (best-effort) y
+            # el barrido de reconciliación lo re-liga — el cambio de modelo no se bloquea.
+            if tbox_code and not verify.tbox_bound(st, plate=unit_id, tbox_code=tbox_code):
+                try:
+                    audit(db, event, context, action="bind", asset_type="tbox",
+                          asset_id=unit.get("tbox_id"), company_id=unit.get("company_id"),
+                          result="pending",
+                          error="qbox se soltó tras cambiar el modelo; el reconciliador lo reintentará")
+                except Exception:
+                    pass
 
         changes["unit_catalog_id"] = body.unit_catalog_id
 
