@@ -4,12 +4,14 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 
 
+@with_asset_lock(lambda e: "tire:" + str((e.get("pathParameters") or {}).get("id")))
 def handler(event, context):
     # path: /tires/{id}/sensors/unbind  -> id = llanta local. Desvincula el sensor actual.
     try:
