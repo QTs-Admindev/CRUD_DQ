@@ -6,9 +6,10 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending
 
 
 class BindSensorRequest(BaseModel):
@@ -85,6 +86,10 @@ def handler(event, context):
         except Exception:
             return error(502, "No se pudo completar la vinculación del sensor, intenta de nuevo")
 
+        # Confirmar por read-back que el sensor REALMENTE quedó asociado a la llanta en la
+        # plataforma. Un 200 no basta: sin esto grabaríamos un falso éxito.
+        confirmed = verify.sensor_on_tyre(st, sensor_code=sensor["sensorCode"], tyre_code=tire_id)
+
         # Local: la relación sensor<->llanta vive en tires.sensor_id.
         try:
             rec = update(db, t("tires"), tire_id, {
@@ -96,11 +101,16 @@ def handler(event, context):
             db.commit()
             audit(db, event, context, action="bind", asset_type="sensor", asset_id=body.sensor_id,
                   natural_key=sensor.get("sensorCode"), company_id=sensor.get("company_id"),
-                  daijin_id=sensor.get("daijin_id"), result="success", changes={"tire_id": tire_id})
-            return ok({**rec, "synced_to_platform": True})
+                  daijin_id=sensor.get("daijin_id"),
+                  result=("success" if confirmed else "pending"), changes={"tire_id": tire_id},
+                  error=(None if confirmed else "bind de sensor no confirmado en la plataforma; el reconciliador lo reintentará"))
         except Exception as e:
             db.rollback()
             return error(500, f"DB error (bind sensor local): {e}")
+        if confirmed:
+            return ok({**rec, "synced_to_platform": True})
+        return pending({**rec, "synced_to_platform": False,
+                        "sync_pending": "el sensor aún no se confirma en la plataforma; queda pendiente de reintentar"})
 
     # LOCAL-ONLY bind: the tire is unmounted (or the tire/unit is not yet synced).
     # We record the sensor<->tire relation locally and defer the platform bind;

@@ -6,9 +6,10 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending
 from functions.vehicles.create import _dajin_type
 
 
@@ -59,13 +60,24 @@ def handler(event, context):
     except Exception as e:
         return error(502, "No se pudo asignar el Qbox, intenta de nuevo")
 
+    # Confirmar por read-back que el Qbox REALMENTE quedó montado en la plataforma. Un 200
+    # no garantiza el bind (el Qbox puede ser fantasma o el update un no-op). Sin esto
+    # grabaríamos un falso éxito y el vehículo quedaría suelto en la plataforma.
+    confirmed = verify.tbox_bound(st, plate=unit_id, tbox_code=tbox["tboxCode"])
+
     try:
         rec = update(db, t("units"), unit_id, {"tbox_id": body.tbox_id, "updated_at": now_ms()})
         db.commit()
         audit(db, event, context, action="bind", asset_type="tbox", asset_id=body.tbox_id,
               natural_key=tbox.get("tboxCode"), company_id=tbox.get("company_id"),
-              daijin_id=tbox.get("daijin_id"), result="success", changes={"unit_id": unit_id})
-        return ok(rec)
+              daijin_id=tbox.get("daijin_id"),
+              result=("success" if confirmed else "pending"), changes={"unit_id": unit_id},
+              error=(None if confirmed else "bind de Qbox no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (asignar tbox local): {e}")
+
+    if confirmed:
+        return ok(rec)
+    return pending({**rec, "sync_pending":
+                    "el Qbox aún no se confirma en la plataforma; queda pendiente de reintentar"})
