@@ -95,6 +95,17 @@ def handler(event, context):
               error=(None if confirmed else "montaje de llanta no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
+        # Backstop atómico: el índice UNIQUE de posición (uq_tire_mount_slot) rechaza un
+        # segundo montaje en la misma (unidad, eje, rueda) aunque el guard de arriba haya
+        # corrido en carrera. Ya hicimos el bind en la plataforma -> lo revertimos para no
+        # divergir, y devolvemos 409 en vez de un 500.
+        if "Duplicate" in str(e) or "uq_tire_mount_slot" in str(e):
+            try:
+                st.post("/smartyre/openapi/vehicle/tyre/unbind",
+                        {"vehicleId": unit["daijin_id"], "tyreCode": str(body.tire_id)})
+            except Exception:
+                pass
+            return error(409, "Ya hay una llanta en esa posición")
         return error(500, f"DB error (bind tire local): {e}")
 
     # If the tire already has a sensor bound LOCALLY (never synced, because the
