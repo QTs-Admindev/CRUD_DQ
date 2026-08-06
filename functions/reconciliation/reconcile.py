@@ -34,6 +34,11 @@ from functions.vehicles.create import _dajin_type
 # Cuántas filas procesar por barrido y por tabla (para no pasarnos del timeout).
 BATCH = 100
 
+# Cool-off: NO tocar filas modificadas hace menos de esto. Evita que el cron corra sobre un
+# snapshot viejo y pise/resucite una liga que un request de usuario acaba de cambiar. El
+# barrido C además re-lee la fila justo antes de re-ligar y re-verifica el predicado local.
+COOLOFF_MS = 120_000
+
 # table: tabla local · resource: recurso en basic-api · list_path: GET de la OpenAPI ·
 # key: llave natural para el GET · active: status al re-resolver un create.
 ASSETS = [
@@ -158,11 +163,16 @@ def _sweep_qbox_bindings(db, st, summary):
     rows = get_where(
         db, t("units"),
         "tbox_id IS NOT NULL AND daijin_id IS NOT NULL AND status = %s "
-        "AND (is_deleted IS NULL OR is_deleted = 0)",
-        ["active"], BATCH,
+        "AND (updated_at IS NULL OR updated_at < %s) AND (is_deleted IS NULL OR is_deleted = 0)",
+        ["active", now_ms() - COOLOFF_MS], BATCH,
     )
     for u in rows:
         try:
+            # Re-leer la fila: pudo cambiar desde el snapshot (un unbind concurrente). No
+            # actuar sobre datos viejos -> no resucitar una liga que el usuario quitó.
+            u = get_by_id(db, t("units"), u["id"])
+            if not u or not u.get("tbox_id") or u.get("status") != "active":
+                continue
             tbox = get_by_id(db, t("tboxes"), u["tbox_id"])
             if not tbox or not tbox.get("tboxCode"):
                 continue
@@ -207,11 +217,15 @@ def _sweep_tyre_bindings(db, st, summary):
     rows = get_where(
         db, t("tires"),
         "unit_id IS NOT NULL AND is_mounted = 1 AND daijin_id IS NOT NULL "
-        "AND (is_deleted IS NULL OR is_deleted = 0)",
-        [], BATCH,
+        "AND (updated_at IS NULL OR updated_at < %s) AND (is_deleted IS NULL OR is_deleted = 0)",
+        [now_ms() - COOLOFF_MS], BATCH,
     )
     for ti in rows:
         try:
+            # Re-leer: un unbind/desmontaje concurrente pudo cambiarla desde el snapshot.
+            ti = get_by_id(db, t("tires"), ti["id"])
+            if not ti or not ti.get("unit_id") or not ti.get("is_mounted"):
+                continue
             unit = get_by_id(db, t("units"), ti["unit_id"])
             if not unit or not unit.get("daijin_id"):
                 continue
@@ -243,11 +257,15 @@ def _sweep_sensor_bindings(db, st, summary):
     rows = get_where(
         db, t("tires"),
         "sensor_id IS NOT NULL AND unit_id IS NOT NULL AND is_mounted = 1 AND daijin_id IS NOT NULL "
-        "AND (is_deleted IS NULL OR is_deleted = 0)",
-        [], BATCH,
+        "AND (updated_at IS NULL OR updated_at < %s) AND (is_deleted IS NULL OR is_deleted = 0)",
+        [now_ms() - COOLOFF_MS], BATCH,
     )
     for ti in rows:
         try:
+            # Re-leer: un unbind de sensor concurrente pudo cambiarla desde el snapshot.
+            ti = get_by_id(db, t("tires"), ti["id"])
+            if not ti or not ti.get("sensor_id") or not ti.get("unit_id") or not ti.get("is_mounted"):
+                continue
             sensor = get_by_id(db, t("sensors"), ti["sensor_id"])
             unit = get_by_id(db, t("units"), ti["unit_id"])
             if not (sensor and sensor.get("sensorCode") and unit and unit.get("daijin_id")):

@@ -63,10 +63,12 @@ def _wire(monkeypatch, *, unit=None, tire=None, store=None, tbox_bound_seq=None,
     return st, updates, audits
 
 
-UNIT = {"id": 1903, "daijin_id": "35094", "unit_catalog_id": 5, "company_id": 133, "tbox_id": 601}
+UNIT = {"id": 1903, "daijin_id": "35094", "unit_catalog_id": 5, "company_id": 133,
+        "tbox_id": 601, "status": "active"}
 TBOX = {"id": 601, "tboxCode": "08927234DC91", "daijin_id": "35374", "company_id": 133}
 CATALOG = {"id": 5, "name": "truck", "type": "motive", "d_id": 7}
-STORE = {"tboxes": {601: TBOX}, "unit_catalog": {5: CATALOG}}
+# 'units' está en el store porque el barrido re-lee la fila primaria antes de re-ligar.
+STORE = {"units": {1903: UNIT}, "tboxes": {601: TBOX}, "unit_catalog": {5: CATALOG}}
 
 
 def test_qbox_rebound_when_diverged(monkeypatch):
@@ -102,7 +104,8 @@ TIRE = {"id": 10, "daijin_id": "P", "unit_id": 1903, "is_mounted": 1,
 
 
 def test_tyre_rebound_when_diverged(monkeypatch):
-    store = {"units": {1903: UNIT}, "unit_catalog": {5: CATALOG}}
+    # 'tires' en el store porque el barrido re-lee la llanta antes de re-montar.
+    store = {"units": {1903: UNIT}, "tires": {10: TIRE}, "unit_catalog": {5: CATALOG}}
     st, updates, audits = _wire(monkeypatch, tire=TIRE, store=store,
                                 tyre_on_seq=[False, True])
     out = reconcile.handler({}, None)
