@@ -5,7 +5,7 @@ from pydantic import BaseModel, ValidationError
 from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, update
+from shared.db.ops import get_by_id, get_where, update
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -39,6 +39,13 @@ def handler(event, context):
         return error(404, "Qbox no encontrado")
     if not tbox.get("daijin_id"):
         return error(409, "El Qbox aún no está listo")
+    # Un solo dueño: si el Qbox ya está en OTRA unidad viva, no lo robamos (guard previo al
+    # POST; el índice UNIQUE uq_unit_tbox_owner es el backstop atómico ante carreras).
+    other = get_where(db, t("units"),
+                      "tbox_id = %s AND id <> %s AND (is_deleted IS NULL OR is_deleted = 0)",
+                      [body.tbox_id, unit_id], 1)
+    if other:
+        return error(409, "Ese Qbox ya está asignado a otra unidad")
     catalog = get_by_id(db, "unit_catalog", unit.get("unit_catalog_id"))
     if not catalog:
         return error(422, "unit_catalog del vehículo no encontrado")
@@ -75,6 +82,17 @@ def handler(event, context):
               error=(None if confirmed else "bind de Qbox no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
+        # Backstop atómico: uq_unit_tbox_owner rechaza el Qbox si otra unidad lo tomó en
+        # carrera. Revertimos el bind que ya hicimos en la plataforma y devolvemos 409.
+        if "Duplicate" in str(e) or "uq_unit_tbox_owner" in str(e):
+            try:
+                st.post("/smartyre/openapi/vehicle/update", {
+                    "id": unit["daijin_id"], "isTractor": is_tractor,
+                    "licensePlateNumber": str(unit_id), "axleTypeId": str(catalog.get("d_id") or ""),
+                    "modelId": model_id, "orgId": DAJIN_ORG_ID, "tboxCode": ""})
+            except Exception:
+                pass
+            return error(409, "Ese Qbox ya está asignado a otra unidad")
         return error(500, f"DB error (asignar tbox local): {e}")
 
     if confirmed:

@@ -30,6 +30,10 @@ class FakeStore:
         return dict(r) if r else None
 
     def get_where(self, db, table, where_sql, params=(), limit=200):
+        # Guard de un-solo-dueño (sensor/tbox ya en otra llanta/unidad): 2 params, sin
+        # otro dueño en estos tests -> [].
+        if "sensor_id = %s" in where_sql or "tbox_id = %s" in where_sql:
+            return []
         # bind_tire's position guard: unit_id, axle_index, wheel_index, exclude tire_id
         unit_id, axle, wheel, exclude_id = params
         return [dict(r) for r in self.rows.values()
