@@ -6,6 +6,7 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
+from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -17,6 +18,7 @@ class BindTboxRequest(BaseModel):
     tbox_id: int
 
 
+@with_asset_lock(lambda e: "unit:" + str((e.get("pathParameters") or {}).get("id")))
 def handler(event, context):
     # path: /vehicles/{id}/tbox/bind  -> id = unidad local. Asigna un tbox al vehículo.
     try:
