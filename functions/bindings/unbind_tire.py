@@ -6,9 +6,10 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending
 
 
 class UnbindTireRequest(BaseModel):
@@ -45,6 +46,9 @@ def handler(event, context):
     except Exception as e:
         return error(502, "No se pudo desmontar la llanta, intenta de nuevo")
 
+    # Confirmar por read-back que la llanta REALMENTE quedó desmontada del vehículo.
+    confirmed = verify.tyre_off_vehicle(st, tyre_code=body.tire_id, plate=unit_id)
+
     try:
         rec = update(db, t("tires"), body.tire_id, {
             "unit_id": None,
@@ -57,8 +61,14 @@ def handler(event, context):
         db.commit()
         audit(db, event, context, action="unbind", asset_type="tire", asset_id=body.tire_id,
               natural_key=tire.get("folio"), company_id=tire.get("company_id"),
-              daijin_id=tire.get("daijin_id"), result="success", changes={"unit_id": None})
-        return ok(rec)
+              daijin_id=tire.get("daijin_id"),
+              result=("success" if confirmed else "pending"), changes={"unit_id": None},
+              error=(None if confirmed else "desmontaje de llanta no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (unbind tire local): {e}")
+
+    if confirmed:
+        return ok(rec)
+    return pending({**rec, "sync_pending":
+                    "la llanta aún se ve montada en la plataforma; queda pendiente de reintentar"})
