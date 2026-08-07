@@ -10,7 +10,7 @@ from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 # Defaults que el sistema viejo manda a la plataforma (no hay mapping tires_catalog -> la plataforma).
 TYRE_BRAND_ID = "1"
@@ -52,7 +52,7 @@ def handler(event, context):
         if not get_by_id(db, "tires_catalog", body.tires_catalog_id):
             return error(422, "tires_catalog_id no existe")
     except Exception as e:
-        return error(500, f"DB error (tires_catalog lookup): {e}")
+        return sync_fail(f"DB error (tires_catalog lookup): {e}")
 
     # A null depth/mileage from the FE is treated as 0 (not a validation error).
     current_depth = body.current_depth if body.current_depth is not None else 0
@@ -150,7 +150,7 @@ def handler(event, context):
                     resumed = True
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (insert tire): {e}")
+        return sync_fail(f"DB error (insert tire): {e}")
 
     # 3. Sync con la plataforma. Natural key = id local (tyreCode) -> assume_new (no preexiste).
     try:
@@ -179,7 +179,7 @@ def handler(event, context):
     except Exception as e:
         audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
               natural_key=body.folio, company_id=body.company_id, result="pending", error=str(e))
-        return pending({"id": local_id, "prefix": body.prefix, "folio": body.folio, "reason": str(e)})
+        return pending({"id": local_id, "prefix": body.prefix, "folio": body.folio, "reason": SYNC_ERROR})
 
     # 4. Activar con el status de negocio.
     try:
@@ -195,4 +195,4 @@ def handler(event, context):
         return ok(rec)
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (activate tire, daijin_id={daijin_id}): {e}")
+        return sync_fail(f"DB error (activate tire, daijin_id={daijin_id}): {e}")

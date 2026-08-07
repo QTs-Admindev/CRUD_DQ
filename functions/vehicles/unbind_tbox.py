@@ -8,7 +8,7 @@ from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 from functions.vehicles.create import _dajin_type
 
 
@@ -47,7 +47,7 @@ def handler(event, context):
             "tboxCode": "",
         })
     except Exception as e:
-        return error(502, "No se pudo quitar el Qbox, intenta de nuevo")
+        return error(502, SYNC_ERROR)
 
     # Confirmar por read-back que el vehículo REALMENTE quedó sin Qbox en la plataforma.
     confirmed = verify.tbox_unbound(st, plate=unit_id)
@@ -62,7 +62,7 @@ def handler(event, context):
               error=(None if confirmed else "unbind de Qbox no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (quitar tbox local): {e}")
+        return sync_fail(f"DB error (quitar tbox local): {e}")
 
     if confirmed:
         return ok(rec)

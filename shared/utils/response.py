@@ -1,10 +1,29 @@
 import json
+import logging
+
+_log = logging.getLogger("crud_dq")
 
 # CORS: en proxy integration el header debe venir del handler, no del gateway.
 _HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
 }
+
+# Mensaje único y amable para fallos de sincronización con la plataforma. El usuario NO
+# necesita ver el error crudo del proveedor/BD — ese detalle va SOLO al log (CloudWatch).
+SYNC_ERROR = "Error de sincronización, intenta de nuevo. Si persiste, contacta a soporte."
+
+
+def sync_fail(detail="", status=500):
+    """Fallo de sync: devuelve un error amable al usuario y manda el detalle real al log.
+
+    Úsalo en los `except` de creación/vinculación/borrado en vez de exponer str(e).
+    """
+    try:
+        _log.warning("sync-fail: %s", detail)
+    except Exception:
+        pass
+    return error(status, SYNC_ERROR)
 
 
 def ok(data) -> dict:
