@@ -11,6 +11,10 @@ def _make_get_where(reg=None, dele=None):
     dele = dele or {}
 
     def gw(db, table, where_sql, params=(), limit=100):
+        # Barridos de ligas (C: Qbox/llanta/sensor): se prueban en test_reconcile_bindings.
+        if any(k in where_sql for k in
+               ("tbox_id IS NOT NULL", "unit_id IS NOT NULL", "sensor_id IS NOT NULL")):
+            return []
         if "status" in where_sql:                       # sweep de registering
             return list(reg.get(table, []))
         if "daijin_id IS NOT NULL" in where_sql:        # sweep de borrados pendientes
