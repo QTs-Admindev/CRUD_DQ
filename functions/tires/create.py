@@ -10,7 +10,7 @@ from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 # Defaults que el sistema viejo manda a la plataforma (no hay mapping tires_catalog -> la plataforma).
 TYRE_BRAND_ID = "1"
@@ -52,7 +52,7 @@ def handler(event, context):
         if not get_by_id(db, "tires_catalog", body.tires_catalog_id):
             return error(422, "tires_catalog_id no existe")
     except Exception as e:
-        return error(500, f"DB error (tires_catalog lookup): {e}")
+        return sync_fail(f"DB error (tires_catalog lookup): {e}")
 
     # A null depth/mileage from the FE is treated as 0 (not a validation error).
     current_depth = body.current_depth if body.current_depth is not None else 0
@@ -88,6 +88,10 @@ def handler(event, context):
     }
 
     # 2. Local-first + idempotency by (folio, company_id), LIVE rows only.
+    # resumed = we picked up an existing row (not a brand-new insert). On the resume path
+    # the upstream record may already be mid-insert by a concurrent racer, so step 3 must
+    # do a confirming GET-before-POST (assume_new=False) instead of blindly inserting.
+    resumed = False
     try:
         rows = get_where(db, t("tires"), live_sql, live_vals, 1)
         existing = rows[0] if rows else None
@@ -112,6 +116,7 @@ def handler(event, context):
                 })
         if existing:
             local_id = existing["id"]
+            resumed = True
         else:
             try:
                 rec = insert(db, t("tires"), tire_row)
@@ -142,9 +147,10 @@ def handler(event, context):
                     if existing.get("daijin_id"):
                         return ok(existing)
                     local_id = existing["id"]
+                    resumed = True
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (insert tire): {e}")
+        return sync_fail(f"DB error (insert tire): {e}")
 
     # 3. Sync con la plataforma. Natural key = id local (tyreCode) -> assume_new (no preexiste).
     try:
@@ -162,7 +168,9 @@ def handler(event, context):
                 "initialTreadDepth": str(current_depth or 0),
                 "totalDistance": tire_mileage or 0,
             },
-            assume_new=True,
+            # Nuevo -> assume_new (el tyreCode = id local recién generado no puede preexistir).
+            # Resume -> GET-before-POST, para que un racer no inserte un duplicado upstream.
+            assume_new=not resumed,
         )
     except SmartTyreNotResolved:
         audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
@@ -171,7 +179,7 @@ def handler(event, context):
     except Exception as e:
         audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
               natural_key=body.folio, company_id=body.company_id, result="pending", error=str(e))
-        return pending({"id": local_id, "prefix": body.prefix, "folio": body.folio, "reason": str(e)})
+        return pending({"id": local_id, "prefix": body.prefix, "folio": body.folio, "reason": SYNC_ERROR})
 
     # 4. Activar con el status de negocio.
     try:
@@ -187,4 +195,4 @@ def handler(event, context):
         return ok(rec)
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (activate tire, daijin_id={daijin_id}): {e}")
+        return sync_fail(f"DB error (activate tire, daijin_id={daijin_id}): {e}")

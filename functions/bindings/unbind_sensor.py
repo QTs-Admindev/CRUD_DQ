@@ -4,11 +4,14 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
+from shared.db.lock import with_asset_lock
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
+@with_asset_lock(lambda e: "tire:" + str((e.get("pathParameters") or {}).get("id")))
 def handler(event, context):
     # path: /tires/{id}/sensors/unbind  -> id = llanta local. Desvincula el sensor actual.
     try:
@@ -37,7 +40,15 @@ def handler(event, context):
             "sensorCode": sensor.get("sensorCode") if sensor else None,
         })
     except Exception as e:
-        return error(502, "No se pudo desvincular el sensor, intenta de nuevo")
+        return error(502, SYNC_ERROR)
+
+    # Confirmar por read-back que el sensor REALMENTE quedó libre de la llanta en la
+    # plataforma (o que ya no existe). Si el sensor no tenía daijin_id/sensorCode, no hay
+    # nada que verificar allá y se toma como confirmado.
+    if sensor and sensor.get("sensorCode"):
+        confirmed = verify.sensor_off_tyre(st, sensor_code=sensor["sensorCode"], tyre_code=tire_id)
+    else:
+        confirmed = True
 
     try:
         rec = update(db, t("tires"), tire_id, {
@@ -48,8 +59,13 @@ def handler(event, context):
         audit(db, event, context, action="unbind", asset_type="sensor", asset_id=sensor_id,
               natural_key=sensor.get("sensorCode") if sensor else None,
               company_id=sensor.get("company_id") if sensor else None,
-              result="success", changes={"tire_id": None})
-        return ok(rec)
+              result=("success" if confirmed else "pending"), changes={"tire_id": None},
+              error=(None if confirmed else "unbind de sensor no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (unbind sensor local): {e}")
+        return sync_fail(f"DB error (unbind sensor local): {e}")
+
+    if confirmed:
+        return ok(rec)
+    return pending({**rec, "sync_pending":
+                    "el sensor aún se ve en la llanta en la plataforma; queda pendiente de reintentar"})

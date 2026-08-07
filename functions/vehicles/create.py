@@ -6,10 +6,11 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, insert, update
+from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
 class CreateVehicleRequest(BaseModel):
@@ -65,12 +66,17 @@ def handler(event, context):
     # 2. Local-first. Business rule: a soft-deleted row is NEVER reused nor matched.
     #    Duplicates are checked only against LIVE rows; a re-alta inserts a fresh row
     #    (a previously deleted unit with the same key is ignored entirely).
+    # resumed = picked up an existing (registering) row rather than a fresh insert. On the
+    # resume path the platform vehicle may already be mid-insert by a racer, so step 4 does a
+    # confirming GET-before-POST (assume_new=False) instead of blindly inserting a duplicate.
+    resumed = False
     try:
         existing = _live_unit()
         if existing:
             if existing.get("daijin_id"):
                 return error(409, DUP_MSG)   # completed alta -> duplicate
             local_id = existing["id"]         # half-done (registering) -> resume
+            resumed = True
         else:
             try:
                 rec = insert(db, t("units"), {
@@ -117,9 +123,10 @@ def handler(event, context):
                     if existing.get("daijin_id"):
                         return error(409, DUP_MSG)
                     local_id = existing["id"]
+                    resumed = True
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (insert unit): {e}")
+        return sync_fail(f"DB error (insert unit): {e}")
 
     # 3. Lookup del catálogo (tabla de referencia REAL, sin prefijo test_)
     try:
@@ -127,7 +134,7 @@ def handler(event, context):
         if not catalog:
             return error(422, f"unit_catalog_id {body.unit_catalog_id} no existe")
     except Exception as e:
-        return error(500, f"DB error (unit_catalog lookup): {e}")
+        return sync_fail(f"DB error (unit_catalog lookup): {e}")
 
     is_tractor, model_id = _dajin_type(catalog)
 
@@ -147,7 +154,9 @@ def handler(event, context):
             list_filter={"licensePlateNumber": str(local_id)},
             insert_path="/smartyre/openapi/vehicle/insert",
             insert_payload=payload,
-            assume_new=True,
+            # Nuevo -> assume_new (licensePlateNumber = id local nuevo, no preexiste).
+            # Resume -> GET-before-POST para no duplicar el vehículo upstream en carrera.
+            assume_new=not resumed,
         )
     except SmartTyreNotResolved:
         audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
@@ -157,7 +166,7 @@ def handler(event, context):
         audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
               natural_key=body.unit_identifier, company_id=body.company_id,
               result="pending", error=str(e))
-        return pending({"id": local_id, "unit_identifier": body.unit_identifier, "reason": str(e)})
+        return pending({"id": local_id, "unit_identifier": body.unit_identifier, "reason": SYNC_ERROR})
 
     # 5. Activar.
     try:
@@ -172,7 +181,7 @@ def handler(event, context):
               daijin_id=daijin_id, result="success")
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (activate unit, daijin_id={daijin_id}): {e}")
+        return sync_fail(f"DB error (activate unit, daijin_id={daijin_id}): {e}")
 
     # 6. Optional Qbox link (platform vehicle/update carrying the tbox). ALL-OR-NOTHING:
     #    units.tbox_id is written ONLY after the platform confirms the link, so MySQL
@@ -214,7 +223,11 @@ def handler(event, context):
             return pending({**rec,
                             "tbox_bind_pending": "no se pudo vincular el Qbox en la plataforma; queda pendiente de reintentar"})
 
-        # Platform confirmed the link -> now it's safe to record it locally.
+        # A 200 from vehicle/update does NOT prove the Qbox bound (it can be a phantom or a
+        # no-op). Confirm by read-back before recording the link, so we never report a bind
+        # the platform doesn't actually have. If unconfirmed we still record the intended
+        # link locally (so the reconciler can find and complete it) but answer `pending`.
+        confirmed = verify.tbox_bound(st, plate=local_id, tbox_code=tbox["tboxCode"])
         try:
             rec = update(db, t("units"), local_id, {"tbox_id": body.tbox_id, "updated_at": now_ms()})
             db.commit()
@@ -222,6 +235,14 @@ def handler(event, context):
             db.rollback()
             # The platform has the link but the local write failed -> report it (not a
             # silent success) so it gets reconciled/re-synced.
-            return error(500, f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
+            return sync_fail(f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
+
+        if not confirmed:
+            audit(db, event, context, action="bind", asset_type="tbox", asset_id=body.tbox_id,
+                  natural_key=tbox.get("tboxCode"), company_id=body.company_id,
+                  daijin_id=tbox.get("daijin_id"), result="pending",
+                  error="qbox bind not confirmed on the platform; reconciler will retry")
+            return pending({**rec,
+                            "tbox_bind_pending": "el Qbox aún no se confirma montado en la plataforma; queda pendiente de reintentar"})
 
     return ok(rec)

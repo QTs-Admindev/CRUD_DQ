@@ -37,6 +37,7 @@ def _wire(monkeypatch, store, db, st):
     monkeypatch.setattr(mod, "get_db", lambda: db)
     monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
     monkeypatch.setattr(mod, "update", store.update)
+    monkeypatch.setattr(mod, "get_where", lambda *a, **k: [])  # sin otro dueño del Qbox
     monkeypatch.setattr(mod, "SmartTyreClient", lambda: st)
 
 
