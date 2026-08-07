@@ -8,18 +8,22 @@
 -- índice UNIQUE los valores NULL NO colisionan entre sí — y "unit-axle-wheel" cuando sí
 -- lo está. Así muchas llantas desmontadas conviven, pero solo una montada por posición.
 --
--- IMPORTANTE: si ya existen posiciones duplicadas (por la carrera previa), este ALTER
--- FALLA. Primero hay que resolver los duplicados (ver la QA de conciliación). Query para
--- encontrarlos:
+-- Solo cuenta como "montada" una llanta con unit_id (un montaje real siempre tiene
+-- unidad). Esto además evita que filas inconsistentes (is_mounted=1 pero unit_id NULL)
+-- colisionen entre sí: quedan con mount_slot NULL y no bloquean el índice.
+--
+-- IMPORTANTE: si ya existen posiciones duplicadas REALES (misma unit+axle+wheel, por la
+-- carrera previa), este ALTER FALLA. Primero hay que resolver los duplicados. Query:
 --   SELECT unit_id, axle_index, wheel_index, COUNT(*) c
---   FROM tires WHERE is_mounted = 1 AND (is_deleted IS NULL OR is_deleted = 0)
+--   FROM tires WHERE is_mounted = 1 AND unit_id IS NOT NULL
+--     AND (is_deleted IS NULL OR is_deleted = 0)
 --   GROUP BY unit_id, axle_index, wheel_index HAVING c > 1;
 
 ALTER TABLE tires
   ADD COLUMN mount_slot VARCHAR(48)
     GENERATED ALWAYS AS (
       CASE
-        WHEN is_mounted = 1 AND (is_deleted IS NULL OR is_deleted = 0)
+        WHEN is_mounted = 1 AND unit_id IS NOT NULL AND (is_deleted IS NULL OR is_deleted = 0)
         THEN CONCAT_WS('-', unit_id, axle_index, wheel_index)
       END
     ) STORED,
