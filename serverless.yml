@@ -371,10 +371,10 @@ functions:
     events:
       - schedule:
           rate: rate(5 minutes)
-          # CUTOVER 2026-07-06: desactivado temporalmente. Al pasar dev a tablas REALES
-          # hay ~137 filas viejas en status='registering' (120 sensors, 9 tires, 8 tboxes)
-          # que este barrido finalizaría en masa. Reactivar tras revisarlas manualmente.
-          enabled: false
+          # Reactivado 2026-08-07: el backlog de 'registering' ya se drenó (quedan ~10 filas)
+          # y el barrido ahora incluye el sweep C (re-liga Qbox/llanta/sensor divergentes y
+          # sana fantasmas). Sin esto, los 'pending' de bind nunca se reconcilian.
+          enabled: true
 
 plugins:
   - serverless-python-requirements
