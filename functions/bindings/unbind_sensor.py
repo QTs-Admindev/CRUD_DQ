@@ -8,7 +8,7 @@ from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
 @with_asset_lock(lambda e: "tire:" + str((e.get("pathParameters") or {}).get("id")))
@@ -40,7 +40,7 @@ def handler(event, context):
             "sensorCode": sensor.get("sensorCode") if sensor else None,
         })
     except Exception as e:
-        return error(502, "No se pudo desvincular el sensor, intenta de nuevo")
+        return error(502, SYNC_ERROR)
 
     # Confirmar por read-back que el sensor REALMENTE quedó libre de la llanta en la
     # plataforma (o que ya no existe). Si el sensor no tenía daijin_id/sensorCode, no hay
@@ -63,7 +63,7 @@ def handler(event, context):
               error=(None if confirmed else "unbind de sensor no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (unbind sensor local): {e}")
+        return sync_fail(f"DB error (unbind sensor local): {e}")
 
     if confirmed:
         return ok(rec)

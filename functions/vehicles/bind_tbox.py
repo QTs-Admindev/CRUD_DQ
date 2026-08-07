@@ -10,7 +10,7 @@ from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 from functions.vehicles.create import _dajin_type
 
 
@@ -67,7 +67,7 @@ def handler(event, context):
             "tboxCode": tbox["tboxCode"],
         })
     except Exception as e:
-        return error(502, "No se pudo asignar el Qbox, intenta de nuevo")
+        return error(502, SYNC_ERROR)
 
     # Confirmar por read-back que el Qbox REALMENTE quedó montado en la plataforma. Un 200
     # no garantiza el bind (el Qbox puede ser fantasma o el update un no-op). Sin esto
@@ -95,7 +95,7 @@ def handler(event, context):
             except Exception:
                 pass
             return error(409, "Ese Qbox ya está asignado a otra unidad")
-        return error(500, f"DB error (asignar tbox local): {e}")
+        return sync_fail(f"DB error (asignar tbox local): {e}")
 
     if confirmed:
         return ok(rec)

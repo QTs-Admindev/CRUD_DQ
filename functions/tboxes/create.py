@@ -10,7 +10,7 @@ from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 from shared.utils.validators import validate_hex12
 
 
@@ -93,7 +93,7 @@ def handler(event, context):
                     local_id = existing["id"]
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (insert tbox): {e}")
+        return sync_fail(f"DB error (insert tbox): {e}")
 
     # 3. Sync with the platform (idempotent). Natural key = tboxCode (external hardware code).
     try:
@@ -112,7 +112,7 @@ def handler(event, context):
     except Exception as e:
         audit(db, event, context, action="create", asset_type="tbox", asset_id=local_id,
               natural_key=body.tbox_code, company_id=body.company_id, result="pending", error=str(e))
-        return pending({"id": local_id, "tboxCode": body.tbox_code, "reason": str(e)})
+        return pending({"id": local_id, "tboxCode": body.tbox_code, "reason": SYNC_ERROR})
 
     # 4. Confirm the match and activate.
     try:
@@ -128,4 +128,4 @@ def handler(event, context):
         return ok(rec)
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (activate tbox, daijin_id={daijin_id}): {e}")
+        return sync_fail(f"DB error (activate tbox, daijin_id={daijin_id}): {e}")

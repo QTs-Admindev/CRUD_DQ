@@ -10,7 +10,7 @@ from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
 class CreateVehicleRequest(BaseModel):
@@ -126,7 +126,7 @@ def handler(event, context):
                     resumed = True
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (insert unit): {e}")
+        return sync_fail(f"DB error (insert unit): {e}")
 
     # 3. Lookup del catálogo (tabla de referencia REAL, sin prefijo test_)
     try:
@@ -134,7 +134,7 @@ def handler(event, context):
         if not catalog:
             return error(422, f"unit_catalog_id {body.unit_catalog_id} no existe")
     except Exception as e:
-        return error(500, f"DB error (unit_catalog lookup): {e}")
+        return sync_fail(f"DB error (unit_catalog lookup): {e}")
 
     is_tractor, model_id = _dajin_type(catalog)
 
@@ -166,7 +166,7 @@ def handler(event, context):
         audit(db, event, context, action="create", asset_type="unit", asset_id=local_id,
               natural_key=body.unit_identifier, company_id=body.company_id,
               result="pending", error=str(e))
-        return pending({"id": local_id, "unit_identifier": body.unit_identifier, "reason": str(e)})
+        return pending({"id": local_id, "unit_identifier": body.unit_identifier, "reason": SYNC_ERROR})
 
     # 5. Activar.
     try:
@@ -181,7 +181,7 @@ def handler(event, context):
               daijin_id=daijin_id, result="success")
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (activate unit, daijin_id={daijin_id}): {e}")
+        return sync_fail(f"DB error (activate unit, daijin_id={daijin_id}): {e}")
 
     # 6. Optional Qbox link (platform vehicle/update carrying the tbox). ALL-OR-NOTHING:
     #    units.tbox_id is written ONLY after the platform confirms the link, so MySQL
@@ -235,7 +235,7 @@ def handler(event, context):
             db.rollback()
             # The platform has the link but the local write failed -> report it (not a
             # silent success) so it gets reconciled/re-synced.
-            return error(500, f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
+            return sync_fail(f"DB error (record qbox link, daijin_id={daijin_id}): {e}")
 
         if not confirmed:
             audit(db, event, context, action="bind", asset_type="tbox", asset_id=body.tbox_id,

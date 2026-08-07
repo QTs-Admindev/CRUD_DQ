@@ -10,7 +10,7 @@ from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
 class BindSensorRequest(BaseModel):
@@ -93,7 +93,7 @@ def handler(event, context):
                 vehicle_id=unit["daijin_id"],
             )
         except Exception:
-            return error(502, "No se pudo completar la vinculación del sensor, intenta de nuevo")
+            return error(502, SYNC_ERROR)
 
         # Confirmar por read-back que el sensor REALMENTE quedó asociado a la llanta en la
         # plataforma. Un 200 no basta: sin esto grabaríamos un falso éxito.
@@ -126,7 +126,7 @@ def handler(event, context):
                 except Exception:
                     pass
                 return error(409, "Ese sensor ya está vinculado a otra llanta")
-            return error(500, f"DB error (bind sensor local): {e}")
+            return sync_fail(f"DB error (bind sensor local): {e}")
         if confirmed:
             return ok({**rec, "synced_to_platform": True})
         return pending({**rec, "synced_to_platform": False,
@@ -153,4 +153,4 @@ def handler(event, context):
         # Camino local puro (no se tocó la plataforma): solo traducir el choque a 409.
         if "Duplicate" in str(e) or "uq_tire_sensor_owner" in str(e):
             return error(409, "Ese sensor ya está vinculado a otra llanta")
-        return error(500, f"DB error (bind sensor local): {e}")
+        return sync_fail(f"DB error (bind sensor local): {e}")

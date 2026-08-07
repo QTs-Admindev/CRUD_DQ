@@ -10,7 +10,7 @@ from shared.db.lock import with_asset_lock
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
 
 
 class UnbindTireRequest(BaseModel):
@@ -46,7 +46,7 @@ def handler(event, context):
             "tyreCode": str(body.tire_id),
         })
     except Exception as e:
-        return error(502, "No se pudo desmontar la llanta, intenta de nuevo")
+        return error(502, SYNC_ERROR)
 
     # Confirmar por read-back que la llanta REALMENTE quedó desmontada del vehículo.
     confirmed = verify.tyre_off_vehicle(st, tyre_code=body.tire_id, plate=unit_id)
@@ -68,7 +68,7 @@ def handler(event, context):
               error=(None if confirmed else "desmontaje de llanta no confirmado en la plataforma; el reconciliador lo reintentará"))
     except Exception as e:
         db.rollback()
-        return error(500, f"DB error (unbind tire local): {e}")
+        return sync_fail(f"DB error (unbind tire local): {e}")
 
     if confirmed:
         return ok(rec)
