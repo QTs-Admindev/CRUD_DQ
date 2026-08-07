@@ -28,4 +28,13 @@ def get_db():
             # después de su primer read).
             init_command="SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
         )
+    else:
+        # Conexión warm reutilizada: descarta cualquier transacción idle que una invocación
+        # previa haya dejado abierta (early-return de validación sin commit/rollback). Evita
+        # el "idle in transaction" y que el primer SELECT vea un snapshot viejo.
+        try:
+            _conn.rollback()
+        except Exception:
+            _conn = None
+            return get_db()
     return _conn

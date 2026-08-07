@@ -88,6 +88,10 @@ def handler(event, context):
     }
 
     # 2. Local-first + idempotency by (folio, company_id), LIVE rows only.
+    # resumed = we picked up an existing row (not a brand-new insert). On the resume path
+    # the upstream record may already be mid-insert by a concurrent racer, so step 3 must
+    # do a confirming GET-before-POST (assume_new=False) instead of blindly inserting.
+    resumed = False
     try:
         rows = get_where(db, t("tires"), live_sql, live_vals, 1)
         existing = rows[0] if rows else None
@@ -112,6 +116,7 @@ def handler(event, context):
                 })
         if existing:
             local_id = existing["id"]
+            resumed = True
         else:
             try:
                 rec = insert(db, t("tires"), tire_row)
@@ -142,6 +147,7 @@ def handler(event, context):
                     if existing.get("daijin_id"):
                         return ok(existing)
                     local_id = existing["id"]
+                    resumed = True
     except Exception as e:
         db.rollback()
         return error(500, f"DB error (insert tire): {e}")
@@ -162,7 +168,9 @@ def handler(event, context):
                 "initialTreadDepth": str(current_depth or 0),
                 "totalDistance": tire_mileage or 0,
             },
-            assume_new=True,
+            # Nuevo -> assume_new (el tyreCode = id local recién generado no puede preexistir).
+            # Resume -> GET-before-POST, para que un racer no inserte un duplicado upstream.
+            assume_new=not resumed,
         )
     except SmartTyreNotResolved:
         audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
