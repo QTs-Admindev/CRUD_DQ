@@ -5,7 +5,7 @@ from pydantic import BaseModel, ValidationError
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, update
+from shared.db.ops import get_by_id, get_where, update
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -57,6 +57,13 @@ def handler(event, context):
         return error(409, "El sensor aún no está listo")
     if sensor.get("company_id") != tire.get("company_id"):
         return error(409, "El sensor es de otra compañía; asígnalo a la compañía de la unidad primero")
+    # Un solo dueño: si el sensor ya está en OTRA llanta viva, no lo robamos (guard previo;
+    # el índice UNIQUE uq_tire_sensor_owner es el backstop atómico ante carreras).
+    other = get_where(db, t("tires"),
+                      "sensor_id = %s AND id <> %s AND (is_deleted IS NULL OR is_deleted = 0)",
+                      [body.sensor_id, tire_id], 1)
+    if other:
+        return error(409, "Ese sensor ya está vinculado a otra llanta")
 
     axle = body.axle_index if body.axle_index is not None else tire.get("axle_index")
     wheel = body.wheel_index if body.wheel_index is not None else tire.get("wheel_index")
@@ -106,6 +113,17 @@ def handler(event, context):
                   error=(None if confirmed else "bind de sensor no confirmado en la plataforma; el reconciliador lo reintentará"))
         except Exception as e:
             db.rollback()
+            # Backstop atómico: uq_tire_sensor_owner rechaza el sensor si otra llanta lo
+            # tomó en carrera. Revertimos el bind que ya hicimos en la plataforma y 409.
+            if "Duplicate" in str(e) or "uq_tire_sensor_owner" in str(e):
+                try:
+                    st.post("/smartyre/openapi/tyre/sensor/unbind", {
+                        "tyreCode": str(tire_id), "vehicleId": unit["daijin_id"],
+                        "axleIndex": axle, "wheelIndex": wheel,
+                        "sensorCode": sensor["sensorCode"]})
+                except Exception:
+                    pass
+                return error(409, "Ese sensor ya está vinculado a otra llanta")
             return error(500, f"DB error (bind sensor local): {e}")
         if confirmed:
             return ok({**rec, "synced_to_platform": True})
@@ -130,4 +148,7 @@ def handler(event, context):
         return ok({**rec, "synced_to_platform": False})
     except Exception as e:
         db.rollback()
+        # Camino local puro (no se tocó la plataforma): solo traducir el choque a 409.
+        if "Duplicate" in str(e) or "uq_tire_sensor_owner" in str(e):
+            return error(409, "Ese sensor ya está vinculado a otra llanta")
         return error(500, f"DB error (bind sensor local): {e}")
