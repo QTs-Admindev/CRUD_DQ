@@ -41,6 +41,13 @@ def handler(event, context):
         return error(404, "Qbox no encontrado")
     if not tbox.get("daijin_id"):
         return error(409, "El Qbox aún no está listo")
+
+    # Tenant guard: Qbox and unit must belong to the same company. Mirrors the
+    # same-owner guards in bind_tire / bind_sensor; without it an admin could
+    # mount a Qbox of another company onto a unit (cross-company binding).
+    if tbox.get("company_id") != unit.get("company_id"):
+        return error(409, "El Qbox y la unidad son de compañías distintas")
+
     # Un solo dueño: si el Qbox ya está en OTRA unidad viva, no lo robamos (guard previo al
     # POST; el índice UNIQUE uq_unit_tbox_owner es el backstop atómico ante carreras).
     other = get_where(db, t("units"),
