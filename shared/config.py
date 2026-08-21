@@ -18,3 +18,8 @@ ADMIN_COMPANY_ID = 2
 # company_id — toda la flota vive bajo el org de Quinta. NO usar company_id como orgId.
 # Configurable por env por si cambiara.
 DAJIN_ORG_ID = os.environ.get("DAJIN_ORG_ID", "218")
+
+# Base URL de GPSHook (EC2). Mongo/OpenSearch/Redis los dueña GPSHook, no CRUD_DQ;
+# al borrar una unidad le avisamos (fire-and-forget) para que purgue su rastro y
+# deje de generar alertas/datos viejos. Configurable por env.
+GPSHOOK_URL = os.environ.get("GPSHOOK_URL", "https://iot.quinta.tech")
