@@ -1,5 +1,5 @@
 from shared.audit import audit
-from shared.config import DAJIN_ORG_ID, t
+from shared.config import DAJIN_ORG_ID, GPSHOOK_URL, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, soft_delete, update
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete
@@ -7,6 +7,19 @@ from shared.smarttyre.client import SmartTyreClient, SmartTyreError
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending_delete
 from functions.vehicles.create import _dajin_type
+
+
+def _purge_gpshook_footprint(unit_id: int) -> None:
+    """Best-effort: pide a GPSHook purgar el rastro de la unidad recién borrada
+    (Mongo TruckRideLog/Sensors/Loads/LastKnownGpsPosition/Alerts + OpenSearch +
+    Redis). NUNCA rompe el borrado: el soft-delete ya quedó commiteado antes de
+    llamar, así que si GPSHook no responde el borrado local se mantiene y la purga
+    se puede reintentar. Mongo lo dueña GPSHook, por eso es una llamada HTTP."""
+    try:
+        import httpx
+        httpx.post(f"{GPSHOOK_URL}/unit/{unit_id}/purge", timeout=10)
+    except Exception:
+        pass
 
 
 def handler(event, context):
@@ -124,6 +137,7 @@ def handler(event, context):
             audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
                   natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
                   daijin_id=daijin_id, result="pending", changes={"is_deleted": 1}, error=msg)
+            _purge_gpshook_footprint(rid)  # limpiar rastro en Mongo/OpenSearch/Redis
             return pending_delete(rec, msg)
         # DONE (o sin daijin_id): soft-delete + limpiar daijin_id (marca cerrado).
         rec = update(db, t("units"), rid, {
@@ -133,6 +147,7 @@ def handler(event, context):
         audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
               natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
               daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
+        _purge_gpshook_footprint(rid)  # limpiar rastro en Mongo/OpenSearch/Redis
         return ok(rec)
     except Exception as e:
         db.rollback()
