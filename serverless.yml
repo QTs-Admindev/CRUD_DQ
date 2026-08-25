@@ -105,6 +105,24 @@ functions:
           method: get
           cors: true
 
+  # Destinatarios de alertas por compañía (números de WhatsApp + correos y sus
+  # switches). GPSHook los lee al mandar la alerta; aquí se administran desde el FE.
+  getCompanyAlerts:
+    handler: functions/companies/get.handler
+    events:
+      - http:
+          path: /companies/{id}
+          method: get
+          cors: true
+
+  updateCompanyAlerts:
+    handler: functions/companies/update.handler
+    events:
+      - http:
+          path: /companies/{id}
+          method: put
+          cors: true
+
   getStatus:
     handler: functions/status/get_status.handler
     events:
