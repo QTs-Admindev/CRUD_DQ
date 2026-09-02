@@ -95,10 +95,17 @@ def handler(event, context):
 
     db = get_db()
 
-    # Only rows still worth syncing; anything already active/deleted drops out.
+    # Filas que todavía valen un intento. Son dos casos distintos y hay que aceptar los
+    # dos:
+    #   - sin `daijin_id`: falta sincronizar contra la plataforma.
+    #   - con `daijin_id` pero en 'registering': ya está en la plataforma y lo que falló
+    #     fue el cambio de estado local; se resuelve sin llamar a la plataforma.
+    # No se filtra SOLO por status: el status es editable y no prueba nada, así que una
+    # fila marcada a mano quedaría fuera del reintento y /sensors/resync la encolaría
+    # para que el worker la descartara en silencio.
     rows = [
         r for r in get_in(db, t("sensors"), "id", ids)
-        if r.get("status") == "registering"
+        if (not r.get("daijin_id") or r.get("status") == "registering")
         and not r.get("is_deleted")
     ]
     if not rows:

@@ -10,7 +10,7 @@ def _make_get_where(reg=None, dele=None):
     reg = reg or {}
     dele = dele or {}
 
-    def gw(db, table, where_sql, params=(), limit=100):
+    def gw(db, table, where_sql, params=(), limit=100, order="ASC"):
         # Barridos de ligas (C: Qbox/llanta/sensor): se prueban en test_reconcile_bindings.
         if any(k in where_sql for k in
                ("tbox_id IS NOT NULL", "unit_id IS NOT NULL", "sensor_id IS NOT NULL")):

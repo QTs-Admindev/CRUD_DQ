@@ -93,7 +93,12 @@ def _sweep_registering(db, st, table, cfg, summary):
     de negocio (una llanta 'used', un sensor 'inactive'), se le completa el id y se
     respeta lo que el usuario puso.
     """
-    rows = get_where(db, table, "daijin_id IS NULL AND is_deleted = 0", [], BATCH)
+    # order="DESC": lo más reciente primero. El selector por `daijin_id IS NULL` abarca
+    # también filas viejas que nunca tuvieron id y que quizá no existan en la plataforma;
+    # con orden ascendente y un cupo de BATCH, ese rezago se comería la corrida entera y
+    # un create atorado de hoy no se reconciliaría nunca.
+    rows = get_where(db, table, "daijin_id IS NULL AND is_deleted = 0", [], BATCH,
+                     order="DESC")
     for r in rows:
         try:
             found = _find_id(st, cfg["list_path"], cfg["key"](r))

@@ -224,3 +224,56 @@ def test_active_without_id_is_rechecked_even_if_status_says_active(
 
     assert resp["statusCode"] == 200
     assert store.rows[1]["daijin_id"] == "42"
+
+
+# --------------- el handler pregunta por el recurso y la llave correctos ---------------
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_confirmation_asks_for_the_right_resource(monkeypatch, mod, resource, row):
+    """Sin esto, pasar "units" en vez de "sensors" (mirar la placa en vez del código
+    de hardware) dejaría todas las demás pruebas en verde."""
+    store = FakeStore({1: dict(row, daijin_id=None, status="registering")})
+    _wire(monkeypatch, mod, store)
+    seen = {}
+
+    def spy(rec, res, **k):
+        seen["resource"] = res
+        seen["rec_id"] = rec.get("id")
+        seen["natural_key"] = rec.get("sensorCode") or rec.get("tboxCode")
+        return "900"
+    monkeypatch.setattr(mod, "confirm_on_platform", spy)
+
+    mod.handler(_ev(1, {"status": "active"}), None)
+
+    assert seen["resource"] == resource
+    assert seen["rec_id"] == 1
+    # La fila que se manda a confirmar es la del activo, con su llave de hardware.
+    assert seen["natural_key"] == (row.get("sensorCode") or row.get("tboxCode"))
+
+
+# ------------- la guarda también aplica en el sentido inverso (H6) -------------
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_a_synced_row_cannot_be_sent_back_to_registering(monkeypatch, mod, resource, row):
+    """Devolver a 'registering' una fila con id la deja en limbo: el barrido no la toca
+    (tiene id) y el estado del importe masivo la cuenta como pendiente para siempre."""
+    store = FakeStore({1: dict(row, daijin_id="55", status="active")})
+    _wire(monkeypatch, mod, store)
+
+    resp = mod.handler(_ev(1, {"status": "registering"}), None)
+
+    assert resp["statusCode"] == 422
+    assert store.updates == []
+    assert store.rows[1]["status"] == "active"
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_a_row_without_id_can_still_be_marked_registering(monkeypatch, mod, resource, row):
+    # Contraprueba: sin id, 'registering' es su estado legítimo y no se bloquea.
+    store = FakeStore({1: dict(row, daijin_id=None, status="inactive")})
+    _wire(monkeypatch, mod, store)
+
+    resp = mod.handler(_ev(1, {"status": "registering"}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["status"] == "registering"

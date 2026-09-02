@@ -101,7 +101,12 @@ def _recover_package_platform(db, rid, daijin_id, m):
         # DONE o GUARD (p. ej. "ya no existe"): el sensor ya no bloquea. Limpiar el
         # vínculo local del sensor (sobrevive sin daijin_id).
         try:
-            update(db, t("sensors"), sensor["id"], {"daijin_id": None, "updated_at": now_ms()})
+            # Vuelve a 'registering': sin id en la plataforma, ese es su estado real, y
+            # así el barrido de reconciliación sabe que debe RE-CREARLO cuando se
+            # reutilice, en vez de encontrarse una fila 'active' sin id (que es
+            # justamente el estado corrupto que el resto del sistema ya no permite).
+            update(db, t("sensors"), sensor["id"],
+                   {"daijin_id": None, "status": "registering", "updated_at": now_ms()})
             db.commit()
         except Exception:
             db.rollback()

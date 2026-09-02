@@ -61,6 +61,12 @@ def handler(event, context):
         payload.get("status") == "active"
         and (sensor.get("status") != "active" or not sensor.get("daijin_id"))
     )
+    # La guarda también aplica al revés: devolver a 'registering' una fila que YA tiene
+    # id en la plataforma la deja en un limbo (el barrido no la toca porque tiene id, y
+    # el estado de los importes masivos la cuenta como pendiente para siempre).
+    if payload.get("status") == "registering" and sensor.get("daijin_id"):
+        return error(422, "El sensor ya está sincronizado; no se puede marcar como pendiente")
+
     healed_id = None
     if needs_confirmation:
         try:

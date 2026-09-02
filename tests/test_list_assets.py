@@ -176,3 +176,24 @@ def test_paged_params_are_not_treated_as_column_filters(monkeypatch):
     mod.handler({"pathParameters": {"resource": "tires"},
                  "queryStringParameters": {"paged": "1", "offset": "10"}}, None)
     assert "paged" not in seen["filters"] and "offset" not in seen["filters"]
+
+
+def test_paged_and_offset_are_reserved_names():
+    # Hoy tampoco se colarían como filtro porque no coinciden con ninguna columna del
+    # whitelist, pero esa es una defensa accidental: el día que un recurso exponga una
+    # columna llamada `offset`, el parámetro de paginación se volvería filtro.
+    assert {"paged", "offset", "limit", "company_id"} <= mod.RESERVED_PARAMS
+
+
+def test_absurd_offset_is_422_not_a_db_error(monkeypatch):
+    _wire_paged(monkeypatch, [], total=0)
+    resp = mod.handler({"pathParameters": {"resource": "tires"},
+                        "queryStringParameters": {"offset": "99999999999999999999"}}, None)
+    assert resp["statusCode"] == 422
+
+
+def test_negative_offset_is_422(monkeypatch):
+    _wire_paged(monkeypatch, [], total=0)
+    resp = mod.handler({"pathParameters": {"resource": "tires"},
+                        "queryStringParameters": {"offset": "-1"}}, None)
+    assert resp["statusCode"] == 422
