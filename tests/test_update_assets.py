@@ -189,3 +189,38 @@ def test_invalid_status_still_422(monkeypatch, mod, resource, row):
     resp = mod.handler(_ev(1, {"status": "encendido"}), None)
     assert resp["statusCode"] == 422
     assert store.updates == []
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_already_active_and_synced_does_not_recheck(monkeypatch, mod, resource, row):
+    """Editar la compañía de un activo ya sincronizado no consulta la plataforma.
+
+    El modal manda siempre el status, así que sin esta condición una edición de
+    compañía se caería con 502 cada vez que la plataforma esté lenta, sin motivo:
+    la fila ya tiene id, que es el invariante que interesa proteger.
+    """
+    store = FakeStore({1: dict(row, daijin_id="55", status="active")})
+    _wire(monkeypatch, mod, store)
+
+    def boom(rec, res, **k):
+        raise AssertionError("no debe consultar la plataforma: ya estaba activo con id")
+    monkeypatch.setattr(mod, "confirm_on_platform", boom)
+
+    resp = mod.handler(_ev(1, {"status": "active", "company_id": 300}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["company_id"] == 300
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_active_without_id_is_rechecked_even_if_status_says_active(
+        monkeypatch, mod, resource, row):
+    """La fila corrupta (activa sin id) sí se vuelve a confirmar: es la que se sana."""
+    store = FakeStore({1: dict(row, daijin_id=None, status="active")})
+    _wire(monkeypatch, mod, store)
+    monkeypatch.setattr(mod, "confirm_on_platform", lambda rec, res, **k: "42")
+
+    resp = mod.handler(_ev(1, {"status": "active"}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["daijin_id"] == "42"

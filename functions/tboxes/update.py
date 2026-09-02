@@ -53,8 +53,16 @@ def handler(event, context):
     # 'active' se CONFIRMA, no se declara: el Qbox tiene que estar dado de alta en la
     # plataforma. Si no, quedaría un activo local que la plataforma no conoce y que
     # además se sale de /tboxes/resync y del cron de reconciliación.
+    # Solo se confirma en la TRANSICIÓN a activo (o si la fila está activa sin id, que
+    # es justo el estado corrupto que se quiere sanar). Repetir "activo" sobre una fila
+    # ya activa y con id no consulta nada: así una edición de compañía no se cae cuando
+    # la plataforma está lenta, y el invariante sigue en pie.
+    needs_confirmation = (
+        mysql_payload.get("status") == "active"
+        and (tbox.get("status") != "active" or not tbox.get("daijin_id"))
+    )
     healed_id = None
-    if mysql_payload.get("status") == "active":
+    if needs_confirmation:
         try:
             daijin_id = confirm_on_platform(tbox, "tboxes")
         except NotOnPlatform:
