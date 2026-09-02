@@ -1,14 +1,18 @@
 """Reintento de sincronización (resync) de sensores atascados: POST /sensors/resync.
 
-El bulk import inserta filas como 'registering' y el worker asíncrono las
-sincroniza contra la plataforma. Si tras MAX_PASSES alguna sigue 'registering',
-queda atascada sin forma de reintentar desde la app. Este endpoint vuelve a
-disparar el worker (misma invocación Event que bulk_create) para esas filas.
+El bulk import inserta filas sin `daijin_id` y el worker asíncrono las sincroniza
+contra la plataforma. Si tras MAX_PASSES alguna sigue sin id, queda atascada sin forma
+de reintentar desde la app. Este endpoint vuelve a disparar el worker (misma invocación
+Event que bulk_create) para esas filas.
+
+La selección es por `daijin_id IS NULL`, no por `status = 'registering'`: el status es
+un campo editable y marcarlo a mano no puede sacar una fila de la recuperación. Lo único
+que prueba que un activo está sincronizado es tener id en la plataforma.
 
 Body opcional { "company_id"?: int, "ids"?: [int] }:
   - company_id: admin puede apuntar a una compañía u omitirlo (alcance global);
     un llamador acotado solo reintenta su propia compañía (igual que list_assets).
-  - ids: si se dan, se limita a esas filas (que además deben seguir 'registering').
+  - ids: si se dan, se limita a esas filas (que además deben seguir sin sincronizar).
 
 No talks to the platform: solo re-encola. Responde de inmediato.
 """
@@ -70,10 +74,11 @@ def handler(event, context):
     # 2. Alcance por compañía: admin ve todo, el resto solo su compañía (como list_assets).
     scope = resolve_company_scope(event, req.company_id)
 
-    # 3. Seleccionar SOLO las filas atascadas ('registering', no borradas), acotadas
-    #    por compañía y/o por ids explícitos cuando se pidan.
-    where = "status = %s AND (is_deleted IS NULL OR is_deleted = 0)"
-    params: list = ["registering"]
+    # 3. Seleccionar SOLO las filas atascadas (sin daijin_id, no borradas), acotadas
+    #    por compañía y/o por ids explícitos cuando se pidan. Se filtra por
+    #    `daijin_id IS NULL` y no por status: el status se puede editar, el id no.
+    where = "daijin_id IS NULL AND (is_deleted IS NULL OR is_deleted = 0)"
+    params: list = []
     if scope is not None:
         where += " AND company_id = %s"
         params.append(scope)
@@ -91,7 +96,7 @@ def handler(event, context):
     ids = [r["id"] for r in rows]
     if not ids:
         return ok({"queued": 0, "batches": 0,
-                   "message": "No hay sensores en 'registering' para reintentar"})
+                   "message": "No hay sensores sin sincronizar para reintentar"})
 
     # 4. Re-disparar el worker en lotes (mismo actor que bulk_create, default 'resync').
     actor = actor_from(event)

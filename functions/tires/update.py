@@ -25,7 +25,9 @@ def handler(event, context):
 
     db = get_db()
     tire = get_by_id(db, "tires", tire_id)
-    if not tire:
+    # Una fila borrada es una línea cerrada: no se edita (mismo criterio que los
+    # listados y el delete, que ya la tratan como inexistente).
+    if not tire or tire.get("is_deleted"):
         return error(404, "Llanta no encontrada")
 
     mysql_payload = {k: v for k, v in body.model_dump().items() if v is not None}

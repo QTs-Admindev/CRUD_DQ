@@ -1,10 +1,17 @@
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import get_many
+from shared.db.ops import count_rows, get_many
 from shared.utils.response import error, ok
 
 DEFAULT_LIMIT = 300
 MAX_LIMIT = 5000
+
+# Modo paginado (`?paged=1`): en vez del arreglo pelón devuelve {data, total, limit,
+# offset}, para que quien consume sepa si lo que recibió es TODO o solo la primera
+# página. Sin el parámetro la respuesta es idéntica a la de siempre (arreglo), así que
+# ningún consumidor actual se entera. Antes no había forma de distinguir "hay 300
+# filas" de "hay 3000 y te di las primeras 300": el corte era silencioso.
+TRUE_VALUES = {"1", "true", "True", "yes"}
 
 # Whitelist recurso -> columnas + comportamiento.
 #   prefixed: la tabla usa TABLE_PREFIX (activos); los catálogos son tablas REALES.
@@ -83,6 +90,15 @@ def handler(event, context):
         except ValueError:
             return error(422, "limit must be an integer")
 
+    offset = 0
+    if qs.get("offset"):
+        try:
+            offset = max(0, int(qs["offset"]))
+        except ValueError:
+            return error(422, "offset must be an integer")
+
+    paged = str(qs.get("paged") or "") in TRUE_VALUES
+
     # Extra optional filters (backward compatible): any output column can be matched
     # exactly via a query param, e.g. ?status=new&is_mounted=1&actor=foo@bar.com.
     # No such params => same behavior as before. company_id/limit keep their special
@@ -97,7 +113,14 @@ def handler(event, context):
     table = t(resource) if cfg["prefixed"] else resource
     db = get_db()
     try:
-        rows = get_many(db, table, cfg["columns"], filters, limit=limit)
+        rows = get_many(db, table, cfg["columns"], filters, limit=limit, offset=offset)
+        if paged:
+            return ok({
+                "data": rows,
+                "total": count_rows(db, table, filters),
+                "limit": limit,
+                "offset": offset,
+            })
         return ok(rows)
     except Exception as e:
         return error(500, f"DB error (list {resource}): {e}")

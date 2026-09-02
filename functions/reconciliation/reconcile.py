@@ -2,9 +2,10 @@
 
 Barridos idempotentes sobre los activos:
 
-  A. CREATES pendientes  (status = 'registering')
+  A. CREATES pendientes  (daijin_id IS NULL)
      El create escribió local pero no confirmó el daijin_id (la plataforma no respondió a
-     tiempo). Se re-resuelve el id por la llave natural vía la OpenAPI y se activa.
+     tiempo). Se re-resuelve el id por la llave natural vía la OpenAPI y se activa. La
+     selección es por la ausencia del id y no por el status, que es editable.
 
   B. BORRADOS pendientes  (is_deleted = 1 AND daijin_id IS NOT NULL)
      El delete marcó local pero no pudo borrar en la plataforma (fallo transitorio). Se
@@ -82,16 +83,26 @@ def handler(event, context):
 
 
 def _sweep_registering(db, st, table, cfg, summary):
-    """A. Re-resuelve el daijin_id de los creates atorados en 'registering'."""
-    rows = get_where(db, table, "status = %s AND is_deleted = 0", ["registering"], BATCH)
+    """A. Re-resuelve el daijin_id de los creates que quedaron sin sincronizar.
+
+    Se selecciona por `daijin_id IS NULL`, no por `status = 'registering'`: el status es
+    editable desde el PUT, y marcarlo a mano no puede sacar una fila del barrido. Lo
+    único que prueba que un activo está sincronizado es tener id en la plataforma.
+
+    El status solo se toca cuando la fila seguía en 'registering'. Si ya traía un status
+    de negocio (una llanta 'used', un sensor 'inactive'), se le completa el id y se
+    respeta lo que el usuario puso.
+    """
+    rows = get_where(db, table, "daijin_id IS NULL AND is_deleted = 0", [], BATCH)
     for r in rows:
         try:
             found = _find_id(st, cfg["list_path"], cfg["key"](r))
             if found is None:
                 continue  # aún no aparece en la plataforma; se reintenta la próxima corrida
-            update(db, table, r["id"], {
-                "daijin_id": found, "status": cfg["active"], "updated_at": now_ms(),
-            })
+            fields = {"daijin_id": found, "updated_at": now_ms()}
+            if r.get("status") == "registering":
+                fields["status"] = cfg["active"]
+            update(db, table, r["id"], fields)
             db.commit()
             summary["resolved"] += 1
         except Exception:
