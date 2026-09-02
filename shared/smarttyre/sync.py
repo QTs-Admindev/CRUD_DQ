@@ -27,6 +27,15 @@ def _find_id(st, list_path, list_filter):
     return records[0]["id"] if records else None
 
 
+def find_id(st, list_path, list_filter):
+    """Id del activo en la plataforma por su llave natural, o None si no está.
+
+    Alias publico de `_find_id` para quien solo necesita CONSULTAR (activacion
+    verificada, barridos), sin la logica de crear/reintentar de resolve_or_create.
+    """
+    return _find_id(st, list_path, list_filter)
+
+
 def resolve_or_create(st, *, list_path, list_filter, insert_path, insert_payload,
                       assume_new=False, backoff=DEFAULT_BACKOFF):
     """Devuelve el daijin_id del activo, creándolo en la plataforma solo si no existe.

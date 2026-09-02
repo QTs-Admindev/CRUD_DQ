@@ -36,7 +36,9 @@ def handler(event, context):
 
     db = get_db()
     unit = get_by_id(db, t("units"), unit_id)
-    if not unit:
+    # Una fila borrada es una línea cerrada: no se edita (mismo criterio que los
+    # listados y el delete, que ya la tratan como inexistente).
+    if not unit or unit.get("is_deleted"):
         return error(404, "Vehículo no encontrado")
 
     # Only the provided (not None) fields are persisted; the rest keep their value.
