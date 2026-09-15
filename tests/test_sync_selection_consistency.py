@@ -72,6 +72,12 @@ def test_worker_accepts_what_resync_queues(mod, table, monkeypatch):
     monkeypatch.setattr(mod, "get_db", lambda: FakeDB())
     monkeypatch.setattr(mod, "get_in", lambda db, table, field, ids: [dict(r) for r in rows])
     monkeypatch.setattr(mod, "SmartTyreClient", lambda: Platform())
+    # La fila que ya trae `daijin_id` YA NO se activa confiando en el campo local:
+    # el worker confirma contra la plataforma primero (ver
+    # test_sync_confirma_ambos_lados.py). Aquí se simula esa confirmación, porque
+    # lo que esta prueba mide es la SELECCIÓN de filas, no la confirmación.
+    monkeypatch.setattr(mod, "confirm_on_platform",
+                        lambda row, recurso, **kw: row.get("daijin_id"))
     monkeypatch.setattr(mod, "update", lambda db, table, rid, data: seen.setdefault("updates", []).append(rid))
     monkeypatch.setattr(mod, "audit", lambda *a, **k: None)
 
