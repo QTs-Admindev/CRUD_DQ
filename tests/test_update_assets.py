@@ -55,6 +55,9 @@ def _wire(monkeypatch, mod, store, *, with_exists=False):
     monkeypatch.setattr(mod, "get_db", lambda: FakeDB())
     monkeypatch.setattr(mod, "get_by_id", store.get_by_id)
     monkeypatch.setattr(mod, "update", store.update)
+    # Por defecto no hay nada que estorbe (ni folio ocupado ni llantas que cascadear);
+    # la prueba que necesite lo contrario lo sobrescribe después de llamar a _wire.
+    monkeypatch.setattr(mod, "get_where", lambda *a, **k: [], raising=False)
     if with_exists:
         monkeypatch.setattr(mod, "exists", store.exists)
 
@@ -422,3 +425,67 @@ def test_un_fallo_de_bitacora_no_tumba_una_edicion_ya_guardada(monkeypatch):
     resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
 
     assert resp["statusCode"] == 200
+
+
+def test_no_se_puede_editar_al_folio_de_otra_llanta_de_la_misma_compania(monkeypatch):
+    """El folio es lo que el usuario lee para identificar la llanta: no se repite
+    dentro de la compañía. El prefijo es visual y no cuenta, así que el índice
+    (prefix, folio, company_id) por sí solo deja pasar el repetido."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(
+        tires_update, "get_where",
+        lambda db, table, where, params, limit: [{"id": 2, "prefix": "CEC",
+                                                  "folio": "303", "company_id": 7}])
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 409
+    assert store.updates == [], "se escribió el folio repetido"
+
+
+def test_el_folio_libre_en_la_compania_si_pasa(monkeypatch):
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "get_where", lambda *a, **k: [])
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["folio"] == "303"
+
+
+def test_cambiar_solo_el_prefijo_no_se_bloquea_a_si_mismo(monkeypatch):
+    """La llanta no choca consigo misma: el folio no cambió."""
+    consultas = []
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "get_where",
+                        lambda *a, **k: consultas.append(a) or [])
+
+    resp = tires_update.handler(_ev(1, {"prefix": "CEC"}), None)
+
+    assert resp["statusCode"] == 200
+    assert consultas == [], "consultó el folio sin que el folio cambiara"
+
+
+def test_la_busqueda_del_folio_ignora_el_prefijo_y_a_la_llanta_misma(monkeypatch):
+    """Dos detalles que no se ven desde el resultado y sin los cuales la regla es
+    falsa: si la consulta filtrara por prefijo no vería a la gemela (que es justo
+    la que hay que ver), y si no se excluyera a sí misma la llanta chocaría
+    consigo al reeditarse."""
+    visto = {}
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+
+    def espia(db, table, where, params, limit):
+        visto["where"] = where
+        visto["params"] = params
+        return []
+
+    monkeypatch.setattr(tires_update, "get_where", espia)
+    tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert "prefix" not in visto["where"], "la búsqueda filtra por prefijo"
+    assert visto["params"][:2] == ["303", 7]
+    assert 1 in visto["params"], "no se excluye a la llanta que se está editando"

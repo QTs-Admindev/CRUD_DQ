@@ -6,7 +6,7 @@ from shared.activation import MARCA_BORRADO
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
-from shared.db.ops import get_by_id, update
+from shared.db.ops import get_by_id, get_where, update
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
@@ -55,6 +55,22 @@ def handler(event, context):
 
     if not cambios:
         return ok(tire)
+
+    # El folio es lo que el usuario lee para identificar la llanta, así que no se
+    # puede repetir dentro de la compañía. El prefijo es visual y NO entra en la
+    # cuenta: `TSM-5` y `CEC-5` son el mismo folio 5 para quien lo ve.
+    #
+    # El índice de la tabla es (prefix, folio, company_id), o sea que la base sola
+    # deja pasar el repetido si el prefijo difiere. Por eso la regla se aplica aquí
+    # y no se delega al índice, igual que hace el alta.
+    if "folio" in cambios and cambios["folio"] != tire.get("folio"):
+        ocupado = get_where(
+            db, t("tires"),
+            "folio = %s AND company_id = %s AND id <> %s "
+            "AND (is_deleted IS NULL OR is_deleted = 0)",
+            [cambios["folio"], tire.get("company_id"), tire_id], 1)
+        if ocupado:
+            return error(409, f"El folio '{cambios['folio']}' ya está usado en esta compañía")
 
     cambios["updated_at"] = now_ms()
 
