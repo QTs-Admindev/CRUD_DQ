@@ -121,3 +121,64 @@ def _matching_id(st, list_path, list_filter, key_field, key_value):
             return None
         return str(found)
     return None
+
+
+# ─── Liberar la llave natural al borrar ───────────────────────────────────────
+#
+# El borrado es lógico: la fila se marca `is_deleted=1` y se queda en la tabla. Pero
+# las llaves UNIQUE no saben de eso:
+#
+#   tires    (prefix, folio, company_id)
+#   sensors  (sensorCode)
+#   units    (unit_identifier, company_id, unit_catalog_id)
+#
+# Así que una fila borrada sigue ocupando su folio o su código PARA SIEMPRE, y al
+# intentar recrear ese activo el alta choca contra el índice. Medido en producción:
+# 70 folios de llanta y 23 códigos de sensor bloqueados así.
+#
+# La solución es renombrar la llave al borrar, dejando una marca que permita
+# reconstruir el valor original. El id va dentro para que dos borrados del mismo
+# folio tampoco choquen entre sí.
+LLAVE_NATURAL = {
+    "tires":   "folio",
+    "sensors": "sensorCode",
+    "units":   "unit_identifier",
+    "tboxes":  "tboxCode",
+}
+
+_MARCA = "#del-"
+# Las columnas son varchar(255); se recorta el valor original si hiciera falta para
+# que la marca quepa entera. Perder cola del folio es preferible a fallar el borrado.
+_LARGO_MAX = 255
+
+
+def liberar_llave_natural(rec: dict, resource: str) -> dict:
+    """Campos a escribir para que la llave natural quede libre tras el borrado.
+
+    Devuelve `{}` si el recurso no tiene llave que liberar o si ya está marcada,
+    para que llamar dos veces sea inofensivo.
+
+        {"folio": "202"}  ->  {"folio": "202#del-4711"}
+
+    El valor original se recupera cortando en la marca.
+    """
+    campo = LLAVE_NATURAL.get(resource)
+    if not campo:
+        return {}
+    actual = rec.get(campo)
+    if actual is None or str(actual).strip() == "":
+        return {}
+    actual = str(actual)
+    if _MARCA in actual:
+        return {}  # ya liberada; no encadenar marcas
+
+    sufijo = f"{_MARCA}{rec.get('id')}"
+    cabe = _LARGO_MAX - len(sufijo)
+    return {campo: actual[:cabe] + sufijo}
+
+
+def llave_original(valor: str) -> str:
+    """El valor de la llave antes de liberarla. Para auditoría y reportes."""
+    if valor is None:
+        return valor
+    return str(valor).split(_MARCA)[0]

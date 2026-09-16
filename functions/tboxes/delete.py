@@ -1,3 +1,4 @@
+from shared.activation import liberar_llave_natural, llave_original
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -45,10 +46,13 @@ def handler(event, context):
             return pending_delete(rec, msg)
         rec = update(db, t("tboxes"), rid, {
             "is_deleted": 1, "daijin_id": None, "updated_at": now_ms(),
+            # Libera el folio/código: la fila se queda, pero su llave natural no
+            # puede seguir ocupando el índice UNIQUE. Ver liberar_llave_natural.
+            **liberar_llave_natural(rec, "tboxes"),
         })
         db.commit()
         audit(db, event, context, action="update", asset_type="tbox", asset_id=rid,
-              natural_key=rec.get("tboxCode"), company_id=rec.get("company_id"),
+              natural_key=llave_original(rec.get("tboxCode")), company_id=rec.get("company_id"),
               daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
         return ok(rec)
     except Exception as e:

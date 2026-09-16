@@ -17,8 +17,11 @@ def _make_get_where(reg=None, dele=None):
             return []
         if "daijin_id IS NULL" in where_sql:            # sweep de creates sin sincronizar
             return list(reg.get(table, []))
-        if "daijin_id IS NOT NULL" in where_sql:        # sweep de borrados pendientes
+        if "is_deleted = 1" in where_sql:               # sweep de borrados pendientes
             return list(dele.get(table, []))
+        # Barrido D (ids fantasma): vive en test_llave_liberada_y_fantasmas.
+        # Distinguirlo importa: su WHERE tambien dice "daijin_id IS NOT NULL",
+        # y si cayera aqui recibiria las filas del barrido de borrados.
         return []
     return gw
 
