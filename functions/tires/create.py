@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.activation import liberar_llave_natural
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -129,7 +130,7 @@ def handler(event, context):
                 dead = get_by_fields(db, t("tires"), key)
                 if dead and dead.get("is_deleted"):
                     update(db, t("tires"), dead["id"], {
-                        "folio": f"{body.folio}__del{dead['id']}",
+                        **liberar_llave_natural(dead, "tires"),
                         "updated_at": now_ms(),
                     })
                     db.commit()

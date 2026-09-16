@@ -6,10 +6,16 @@ Dos huecos que dejaban activos inservibles sin que nadie se enterara.
 1. AL BORRAR, EL FOLIO SEGUÍA OCUPADO
 
 El borrado es lógico: la fila se queda con `is_deleted=1`. Pero las llaves UNIQUE
-no saben de eso, así que la fila borrada sigue ocupando su folio o su código para
-siempre y el alta del mismo activo choca contra el índice.
+no saben de eso, así que la fila borrada sigue ocupando su folio o su código.
 
-Medido en producción: 70 folios de llanta y 23 códigos de sensor bloqueados así.
+Medido en producción: 70 folios de llanta y 23 códigos de sensor ocupados por filas
+ya borradas.
+
+Matiz importante: los creates YA se recuperaban de esto, pero de forma REACTIVA
+(chocar contra el índice, liberar la llave del muerto, reintentar el insert). Eso
+funciona para el alta, y no para nada más: cualquiera que mire la llave antes de
+insertar la ve ocupada. Ahora se libera al borrar, y el camino reactivo del create
+queda como red por si acaso, con la misma marca.
 
 2. LO QUE ESTÁ EN INVENTARIO NO SE REVISABA NUNCA
 
@@ -283,3 +289,18 @@ def test_solo_se_revisa_la_rebanada_que_toca_y_con_tope():
     assert "is_deleted = 0" in where and "id %" in where
     assert params == [reconcile._rebanada_actual()]
     assert tope == reconcile.VERIFY_MAX
+
+
+# ─── 1c. Una sola marca para todo el repo ────────────────────────────────────
+
+def test_ningun_camino_inventa_su_propia_marca():
+    """Los seis creates ya liberaban la llave al chocar, pero con OTRA marca
+    (`__del{id}`). Dos formatos para lo mismo significa que `llave_original` solo
+    recupera la mitad de los casos y que la auditoría muestra folios a medias.
+    """
+    import pathlib
+    raiz = pathlib.Path(__file__).resolve().parents[1]
+    culpables = [str(p.relative_to(raiz))
+                 for p in list((raiz / "functions").rglob("*.py")) + [raiz / "shared" / "activation.py"]
+                 if "__del" in p.read_text(encoding="utf-8")]
+    assert culpables == [], f"marca propia en: {culpables}"
