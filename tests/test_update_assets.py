@@ -27,11 +27,18 @@ class FakeDB:
 class FakeStore:
     """Almacén por id (no distingue tablas, igual que el de test_assign)."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, companies=None):
         self.rows = rows
         self.updates = []
+        # `companies` es tabla de referencia aparte: None = todas existen; una lista
+        # acota cuáles, para probar el caso de la compañía que no existe.
+        self.companies = companies
 
     def get_by_id(self, db, table, rid):
+        if table == "companies":
+            if self.companies is None or rid in self.companies:
+                return {"id": rid, "name": "Compania"}
+            return None
         r = self.rows.get(rid)
         return dict(r) if r else None
 
@@ -277,3 +284,141 @@ def test_a_row_without_id_can_still_be_marked_registering(monkeypatch, mod, reso
 
     assert resp["statusCode"] == 200
     assert store.rows[1]["status"] == "registering"
+
+
+# ------------------------------------------- 3. la compañía destino tiene que existir
+
+COMPANY_CASES = [
+    (sensors_update, {"id": 1, "status": "active", "daijin_id": "9", "sensorCode": "AA"}),
+    (tboxes_update, {"id": 1, "status": "active", "daijin_id": "9", "tboxCode": "BB"}),
+    (vehicles_update, {"id": 1, "status": "active", "daijin_id": "9",
+                       "unit_identifier": "U1", "company_id": 7}),
+]
+
+
+@pytest.mark.parametrize("mod, row", COMPANY_CASES,
+                         ids=["sensores", "qbox", "unidades"])
+def test_no_se_mueve_a_una_compania_que_no_existe(monkeypatch, mod, row):
+    """Un company_id cualquiera deja el activo colgado de una compañía fantasma: se
+    sale de los listados (que filtran por compañía) sin estar borrado."""
+    store = FakeStore({1: dict(row)}, companies=[7])
+    _wire(monkeypatch, mod, store)
+    monkeypatch.setattr(mod, "get_where", lambda *a, **k: [], raising=False)
+
+    resp = mod.handler(_ev(1, {"company_id": 999}), None)
+
+    assert resp["statusCode"] == 422
+    assert store.updates == [], "se escribió antes de validar la compañía"
+
+
+@pytest.mark.parametrize("mod, row", COMPANY_CASES,
+                         ids=["sensores", "qbox", "unidades"])
+def test_si_la_compania_existe_el_cambio_pasa(monkeypatch, mod, row):
+    store = FakeStore({1: dict(row)}, companies=[7, 300])
+    _wire(monkeypatch, mod, store)
+    monkeypatch.setattr(mod, "get_where", lambda *a, **k: [], raising=False)
+
+    resp = mod.handler(_ev(1, {"company_id": 300}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["company_id"] == 300
+
+
+# ------------------------------------------------- 4. el update de llantas, en detalle
+
+def _llanta(**extra):
+    base = {"id": 1, "is_deleted": 0, "prefix": "QT", "folio": "202",
+            "company_id": 7, "daijin_id": "33"}
+    base.update(extra)
+    return base
+
+
+def test_la_llanta_se_edita_en_la_tabla_del_stage(monkeypatch):
+    """El handler usaba la tabla literal `tires` en vez de `t("tires")`. Hoy no se
+    nota porque el prefijo va vacío, pero en un stage con prefijo el editar sería el
+    único endpoint escribiendo en otra tabla."""
+    from shared import config
+
+    monkeypatch.setattr(config, "TABLE_PREFIX", "qa_")
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 200
+    assert store.updates[0][0] == "qa_tires"
+
+
+def test_editar_la_llanta_deja_fecha(monkeypatch):
+    """Sin `updated_at` no hay forma de saber cuándo se tocó, y el cool-off del cron
+    (que se apoya en esa fecha) no protege a la fila recién editada."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+
+    tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert store.updates[0][2].get("updated_at")
+
+
+def test_un_folio_ya_tomado_es_409_y_no_un_500(monkeypatch):
+    """(prefix, folio, company_id) es UNIQUE. El choque es error del usuario: antes
+    salía como 500 con el SQL crudo dentro del mensaje."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "update",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("1062 Duplicate entry 'QT-303-7'")))
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 409
+    assert "Duplicate" not in json.dumps(resp), "se devolvió SQL crudo al cliente"
+
+
+@pytest.mark.parametrize("body", [{"folio": ""}, {"folio": "   "}, {"prefix": ""}])
+def test_no_se_puede_dejar_la_llave_en_blanco(monkeypatch, body):
+    """Mandar el campo vacío no es 'déjalo como está' (eso es no mandarlo): sería
+    borrar media llave natural y dejar la llanta sin forma de nombrarse."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+
+    resp = tires_update.handler(_ev(1, body), None)
+
+    assert resp["statusCode"] == 422
+    assert store.updates == []
+
+
+def test_no_se_puede_escribir_la_marca_de_borrado_en_el_folio(monkeypatch):
+    """`#del-` es infraestructura del índice UNIQUE. Si entrara como folio, la
+    auditoría cortaría el valor por ahí y quedaría escrito a medias."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+
+    resp = tires_update.handler(_ev(1, {"folio": "202#del-9"}), None)
+
+    assert resp["statusCode"] == 422
+    assert store.updates == []
+
+
+def test_editar_la_llanta_queda_en_la_bitacora(monkeypatch):
+    registrado = []
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "audit",
+                        lambda *a, **k: registrado.append(k))
+
+    tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert registrado, "el cambio de folio no dejó rastro"
+    assert registrado[0]["asset_id"] == 1
+
+
+def test_un_fallo_de_bitacora_no_tumba_una_edicion_ya_guardada(monkeypatch):
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "audit",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bitácora caída")))
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 200

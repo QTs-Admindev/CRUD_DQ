@@ -50,6 +50,15 @@ def handler(event, context):
     if not mysql_payload:
         return ok(tbox)
 
+    # company_id: la compañía destino tiene que EXISTIR antes de escribir nada. Un
+    # entero cualquiera deja el activo colgado de una compañía fantasma: desaparece
+    # de los listados (que filtran por compañía) sin estar borrado. El update de
+    # unidades ya lo valida; este no lo hacía.
+    # `companies` es tabla de referencia real, sin prefijo de stage.
+    if body.company_id is not None and body.company_id != tbox.get("company_id"):
+        if not get_by_id(db, "companies", body.company_id):
+            return error(422, "company_id no existe")
+
     # 'active' se CONFIRMA, no se declara: el Qbox tiene que estar dado de alta en la
     # plataforma. Si no, quedaría un activo local que la plataforma no conoce y que
     # además se sale de /tboxes/resync y del cron de reconciliación.

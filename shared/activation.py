@@ -146,7 +146,7 @@ LLAVE_NATURAL = {
     "tboxes":  "tboxCode",
 }
 
-_MARCA = "#del-"
+MARCA_BORRADO = "#del-"
 # Las columnas son varchar(255); se recorta el valor original si hiciera falta para
 # que la marca quepa entera. Perder cola del folio es preferible a fallar el borrado.
 _LARGO_MAX = 255
@@ -169,10 +169,10 @@ def liberar_llave_natural(rec: dict, resource: str) -> dict:
     if actual is None or str(actual).strip() == "":
         return {}
     actual = str(actual)
-    if _MARCA in actual:
+    if MARCA_BORRADO in actual:
         return {}  # ya liberada; no encadenar marcas
 
-    sufijo = f"{_MARCA}{rec.get('id')}"
+    sufijo = f"{MARCA_BORRADO}{rec.get('id')}"
     cabe = _LARGO_MAX - len(sufijo)
     return {campo: actual[:cabe] + sufijo}
 
@@ -181,4 +181,4 @@ def llave_original(valor: str) -> str:
     """El valor de la llave antes de liberarla. Para auditoría y reportes."""
     if valor is None:
         return valor
-    return str(valor).split(_MARCA)[0]
+    return str(valor).split(MARCA_BORRADO)[0]
