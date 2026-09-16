@@ -62,8 +62,29 @@ def handler(event, context):
     # El folio debe ser único POR COMPAÑÍA (puede repetirse entre compañías distintas).
     key = {"folio": body.folio, "company_id": body.company_id}
     # LIVE = not soft-deleted; a deleted row is never reused nor matched.
+    #
+    # El orden importa y no es cosmético. El índice UNIQUE de la tabla es
+    # (prefix, folio, company_id), o sea que la base SÍ deja convivir dos llantas
+    # vivas con el mismo folio y compañía si el prefijo difiere — y hay 32 grupos
+    # así en producción. Este endpoint es más estricto y contesta 409, pero como
+    # solo leía UNA fila sin ordenar, con cuál se topaba era cuestión de suerte:
+    # con la del mismo prefijo reanudaba (correcto) y con la de otro prefijo
+    # contestaba 409 (falso choque contra una llanta que no era). Ordenando por
+    # coincidencia exacta de prefijo, la fila propia siempre gana.
     live_sql = "folio = %s AND company_id = %s AND (is_deleted IS NULL OR is_deleted = 0)"
     live_vals = [body.folio, body.company_id]
+
+    def _fila_viva():
+        """La llanta viva que corresponde a este alta, si la hay.
+
+        Se leen varias y se prefiere la del MISMO prefijo: la coincidencia exacta
+        es la propia llanta (reanudar el alta), y cualquier otra es la de alguien
+        más (choque de folio). Leer una sola sin criterio hacía que cuál de las dos
+        saliera fuera cuestión de suerte.
+        """
+        vivas = get_where(db, t("tires"), live_sql, live_vals, 10)
+        exacta = next((r for r in vivas if r.get("prefix") == body.prefix), None)
+        return exacta or (vivas[0] if vivas else None)
 
     # (folio, company_id) has a UNIQUE index (named `prefix`), so a soft-deleted row
     # holding that folio is freed (tombstone) so the tyre can be re-created.
@@ -94,8 +115,7 @@ def handler(event, context):
     # do a confirming GET-before-POST (assume_new=False) instead of blindly inserting.
     resumed = False
     try:
-        rows = get_where(db, t("tires"), live_sql, live_vals, 1)
-        existing = rows[0] if rows else None
+        existing = _fila_viva()
         if existing and existing.get("prefix") != body.prefix:
             return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
         if existing and existing.get("daijin_id"):
@@ -139,8 +159,7 @@ def handler(event, context):
                     local_id = rec["id"]
                 else:
                     # Race with a concurrent LIVE create.
-                    rows = get_where(db, t("tires"), live_sql, live_vals, 1)
-                    existing = rows[0] if rows else None
+                    existing = _fila_viva()
                     if not existing:
                         raise
                     if existing.get("prefix") != body.prefix:
