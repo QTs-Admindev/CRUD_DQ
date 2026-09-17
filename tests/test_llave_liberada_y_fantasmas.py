@@ -80,12 +80,35 @@ def test_liberar_dos_veces_no_encadena_marcas():
     assert liberar_llave_natural({"id": 1, **una}, "tires") == {}
 
 
-def test_una_llave_larga_no_desborda_la_columna():
-    """Las columnas son varchar(255). Perder cola del folio es preferible a que
-    el borrado falle por longitud."""
-    campos = liberar_llave_natural({"id": 999999, "folio": "X" * 300}, "tires")
-    assert len(campos["folio"]) <= 255
-    assert campos["folio"].endswith("#del-999999")
+@pytest.mark.parametrize("recurso,campo,largo", [
+    ("tires", "folio", 255),
+    ("units", "unit_identifier", 255),
+    ("sensors", "sensorCode", 100),
+    ("tboxes", "tboxCode", 100),
+])
+def test_una_llave_larga_no_desborda_su_columna(recurso, campo, largo):
+    """El largo NO es el mismo en las cuatro: folio y unit_identifier son
+    varchar(255), pero sensorCode y tboxCode son varchar(100). Recortar contra el
+    largo equivocado deja que la marca se pase del campo, y ahí el borrado falla o
+    se trunca en silencio según el modo de MySQL.
+
+    Se recorta el valor original, nunca la marca: perder cola es preferible a que
+    el borrado falle."""
+    campos = liberar_llave_natural({"id": 999999, campo: "X" * 400}, recurso)
+    assert len(campos[campo]) <= largo, f"{campo} se pasa de varchar({largo})"
+    assert campos[campo].endswith("#del-999999"), "se recortó la marca en vez del valor"
+
+
+def test_los_largos_declarados_son_los_de_la_base():
+    """Si alguien cambia la columna en una migración y no aquí, el recorte queda
+    mal y no se entera nadie hasta que un código largo falle al borrarse."""
+    from shared.activation import LLAVE_NATURAL
+    assert LLAVE_NATURAL == {
+        "tires":   ("folio", 255),
+        "sensors": ("sensorCode", 100),
+        "units":   ("unit_identifier", 255),
+        "tboxes":  ("tboxCode", 100),
+    }
 
 
 def test_sin_llave_no_se_inventa_nada():

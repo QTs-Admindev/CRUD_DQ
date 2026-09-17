@@ -139,17 +139,18 @@ def _matching_id(st, list_path, list_filter, key_field, key_value):
 # La solución es renombrar la llave al borrar, dejando una marca que permita
 # reconstruir el valor original. El id va dentro para que dos borrados del mismo
 # folio tampoco choquen entre sí.
+# recurso -> (columna, largo de la columna). El largo NO es el mismo en las cuatro:
+# folio y unit_identifier son varchar(255), pero sensorCode y tboxCode son
+# varchar(100). Recortar contra el largo equivocado deja que la marca se pase del
+# campo, y ahí el borrado falla o se trunca en silencio según el modo de MySQL.
 LLAVE_NATURAL = {
-    "tires":   "folio",
-    "sensors": "sensorCode",
-    "units":   "unit_identifier",
-    "tboxes":  "tboxCode",
+    "tires":   ("folio", 255),
+    "sensors": ("sensorCode", 100),
+    "units":   ("unit_identifier", 255),
+    "tboxes":  ("tboxCode", 100),
 }
 
 MARCA_BORRADO = "#del-"
-# Las columnas son varchar(255); se recorta el valor original si hiciera falta para
-# que la marca quepa entera. Perder cola del folio es preferible a fallar el borrado.
-_LARGO_MAX = 255
 
 
 def liberar_llave_natural(rec: dict, resource: str) -> dict:
@@ -162,7 +163,7 @@ def liberar_llave_natural(rec: dict, resource: str) -> dict:
 
     El valor original se recupera cortando en la marca.
     """
-    campo = LLAVE_NATURAL.get(resource)
+    campo, largo_max = LLAVE_NATURAL.get(resource, (None, 0))
     if not campo:
         return {}
     actual = rec.get(campo)
@@ -172,8 +173,10 @@ def liberar_llave_natural(rec: dict, resource: str) -> dict:
     if MARCA_BORRADO in actual:
         return {}  # ya liberada; no encadenar marcas
 
+    # Se recorta el valor original, no la marca: perder cola del folio es
+    # preferible a que el borrado falle por longitud.
     sufijo = f"{MARCA_BORRADO}{rec.get('id')}"
-    cabe = _LARGO_MAX - len(sufijo)
+    cabe = largo_max - len(sufijo)
     return {campo: actual[:cabe] + sufijo}
 
 
