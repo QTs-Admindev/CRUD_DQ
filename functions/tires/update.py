@@ -79,8 +79,14 @@ def handler(event, context):
                     "AND (is_deleted IS NULL OR is_deleted = 0)",
                     [cambios["folio"], tire.get("company_id"), tire_id], 1)
                 if ocupado:
-                    return error(409,
-                                 f"El folio '{cambios['folio']}' ya está usado en esta compañía")
+                    # Decir CUÁL lo tiene, no solo que está ocupado: sin eso el
+                    # usuario queda atorado sin saber qué hacer, y la llanta que
+                    # estorba puede ser una que ni sabía que existía.
+                    otra = ocupado[0]
+                    return error(409, f"El folio '{cambios['folio']}' ya lo usa la llanta "
+                                      f"{otra.get('prefix') or ''}{'-' if otra.get('prefix') else ''}"
+                                      f"{otra.get('folio')} (id {otra.get('id')}) "
+                                      f"en esta compañía")
 
             record = update(db, t("tires"), tire_id, cambios)
             db.commit()

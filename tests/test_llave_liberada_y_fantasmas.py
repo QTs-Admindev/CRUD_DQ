@@ -317,3 +317,94 @@ def test_ningun_camino_inventa_su_propia_marca():
                  for p in list((raiz / "functions").rglob("*.py")) + [raiz / "shared" / "activation.py"]
                  if "__del" in p.read_text(encoding="utf-8")]
     assert culpables == [], f"marca propia en: {culpables}"
+
+
+# ─── 2b. El cortacircuitos: que una lectura mala no vacíe la flota ───────────
+
+def _muchas(n):
+    return [dict(FILA, id=i) for i in range(1, n + 1)]
+
+
+def test_un_punado_de_ausentes_si_se_limpia():
+    """Lo normal: alguien borró un par de cosas del otro lado."""
+    updates, summary, _ = _correr(
+        _muchas(20),
+        lambda r, *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está"))
+        if r["id"] <= 3 else "555")
+    assert summary["phantom_cleared"] == 3
+    assert summary.get("verify_aborted", 0) == 0
+
+
+def test_si_TODO_sale_ausente_no_se_toca_nada():
+    """El escenario que de verdad asusta: la plataforma contesta bien pero con
+    resultados vacíos — cambió el endpoint, el filtro por organización dejó de
+    aplicar, el token quedó con otro alcance. Obedecer eso vaciaría los ids de la
+    flota entera: 80 por corrida, 288 corridas al día."""
+    updates, summary, _ = _correr(
+        _muchas(40), lambda *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está")))
+    assert updates == [], "se desactivaron activos con una lectura que no es creíble"
+    assert summary.get("phantom_cleared", 0) == 0
+    assert summary["verify_aborted"] == 40
+
+
+def test_muchos_ausentes_avisan():
+    """Frenar en silencio sería igual de malo: nadie se enteraría de que el
+    barrido lleva días sin hacer nada."""
+    avisos = []
+    with patch.object(reconcile, "notificar", lambda **k: avisos.append(k)):
+        _correr(_muchas(40),
+                lambda *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está")))
+    assert len(avisos) == 1
+    assert "40" in avisos[0]["detalle"]
+
+
+def test_una_sola_fila_ausente_no_dispara_la_proporcion():
+    """Con un lote chico la proporción no dice nada: una de una es 100 % y aun así
+    es el caso más normal del mundo."""
+    updates, summary, _ = _correr(
+        [dict(FILA)], lambda *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está")))
+    assert summary["phantom_cleared"] == 1
+    assert summary.get("verify_aborted", 0) == 0
+
+
+def test_la_fase_de_mirar_no_escribe():
+    """El orden importa: si escribiera mientras consulta, para cuando se descubre
+    que la lectura es mala ya habría desactivado media rebanada."""
+    escrituras = []
+    filas = _muchas(40)
+
+    def plataforma(r, *a, **k):
+        assert escrituras == [], "escribió antes de terminar de consultar"
+        raise NotOnPlatform("no está")
+
+    with patch.object(reconcile, "get_where", return_value=filas), \
+         patch.object(reconcile, "update",
+                      lambda db, t, rid, data: escrituras.append(rid)), \
+         patch.object(reconcile, "confirm_on_platform", side_effect=plataforma), \
+         patch.object(reconcile, "notificar", lambda **k: None):
+        reconcile._sweep_phantom_ids(MagicMock(), MagicMock(), "sensors",
+                                     _cfg(), {"errors": 0})
+    assert escrituras == []
+
+
+def test_el_tope_absoluto_frena_aunque_la_proporcion_sea_baja():
+    """Las dos reglas cubren cosas distintas y por eso van las dos. En una rebanada
+    grande, 15 ausencias son poca proporción y aun así son demasiadas para creerlas
+    de golpe."""
+    updates, summary, _ = _correr(
+        _muchas(100),
+        lambda r, *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está"))
+        if r["id"] <= 15 else "555")
+    assert updates == []
+    assert summary["verify_aborted"] == 15
+
+
+def test_la_proporcion_frena_aunque_el_numero_sea_chico():
+    """Y al revés: 9 ausencias no pasan del tope, pero si son 9 de 20 revisadas, la
+    lectura no es creíble."""
+    updates, summary, _ = _correr(
+        _muchas(20),
+        lambda r, *a, **k: (_ for _ in ()).throw(NotOnPlatform("no está"))
+        if r["id"] <= 9 else "555")
+    assert updates == []
+    assert summary["verify_aborted"] == 9

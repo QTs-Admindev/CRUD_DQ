@@ -125,7 +125,9 @@ def handler(event, context):
         with asset_lock(db, f"folio:{body.company_id}:{body.folio}"):
             existing = _fila_viva()
             if existing and existing.get("prefix") != body.prefix:
-                return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+                return error(409, f"El folio '{body.folio}' ya lo usa la llanta "
+                                          f"{existing.get('prefix') or '?'}-{body.folio} "
+                                          f"(id {existing.get('id')}) en esta compañía")
             if existing and existing.get("daijin_id"):
                 # Self-heal: verify the stored daijin_id still resolves in the platform; re-create
                 # upstream (tyreCode == our local id) if it is a phantom.
@@ -171,7 +173,9 @@ def handler(event, context):
                         if not existing:
                             raise
                         if existing.get("prefix") != body.prefix:
-                            return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+                            return error(409, f"El folio '{body.folio}' ya lo usa la llanta "
+                                          f"{existing.get('prefix') or '?'}-{body.folio} "
+                                          f"(id {existing.get('id')}) en esta compañía")
                         if existing.get("daijin_id"):
                             return ok(existing)
                         local_id = existing["id"]

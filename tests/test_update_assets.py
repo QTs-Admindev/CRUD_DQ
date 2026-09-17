@@ -489,3 +489,20 @@ def test_la_busqueda_del_folio_ignora_el_prefijo_y_a_la_llanta_misma(monkeypatch
     assert "prefix" not in visto["where"], "la búsqueda filtra por prefijo"
     assert visto["params"][:2] == ["303", 7]
     assert 1 in visto["params"], "no se excluye a la llanta que se está editando"
+
+
+def test_el_409_dice_CUAL_llanta_tiene_el_folio(monkeypatch):
+    """Sin esto el usuario queda atorado: le dicen que está ocupado y no con qué.
+    Y la llanta que estorba puede ser una que ni sabía que existía."""
+    store = FakeStore({1: _llanta()})
+    _wire(monkeypatch, tires_update, store)
+    monkeypatch.setattr(tires_update, "get_where",
+                        lambda *a, **k: [{"id": 4711, "prefix": "CEC",
+                                          "folio": "303", "company_id": 7}])
+
+    resp = tires_update.handler(_ev(1, {"folio": "303"}), None)
+
+    assert resp["statusCode"] == 409
+    cuerpo = json.dumps(resp)
+    assert "4711" in cuerpo, "no dice el id de la llanta que lo tiene"
+    assert "CEC" in cuerpo, "no dice el prefijo de la llanta que lo tiene"

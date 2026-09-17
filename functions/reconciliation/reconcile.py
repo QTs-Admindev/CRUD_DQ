@@ -82,7 +82,7 @@ def handler(event, context):
     summary = {"resolved": 0, "deleted": 0, "guard_blocked": 0,
                "rebound": 0, "binding_pending": 0, "errors": 0,
                "verified": 0, "phantom_cleared": 0, "phantom_healed": 0,
-               "verify_skipped": 0}
+               "verify_skipped": 0, "verify_aborted": 0}
 
     for cfg in ASSETS:
         table = t(cfg["table"])
@@ -186,6 +186,22 @@ def _clear_daijin(db, table, rec, resource):
 VERIFY_PERIOD = int(os.getenv("VERIFY_PERIOD_RUNS", "288"))
 VERIFY_MAX = int(os.getenv("VERIFY_MAX_ROWS", "80"))
 
+# Cortacircuitos. Que la plataforma conteste "no está" para UN activo es normal:
+# lo borraron allá. Que lo conteste para MUCHOS a la vez no es un dato, es un
+# síntoma — el endpoint cambió de forma, el filtro por organización dejó de
+# aplicar, el token quedó con otro alcance. En ese caso los "no está" son falsos y
+# obedecerlos desactivaría la flota entera: 80 por corrida, 288 corridas al día.
+#
+# Por eso el barrido primero MIRA y luego escribe: si la proporción de ausencias
+# pasa del umbral, no toca nada y avisa. Prefiere quedarse corto un día a vaciar
+# los ids de todos.
+VERIFY_MAX_CLEAR = int(os.getenv("VERIFY_MAX_CLEAR", "10"))
+VERIFY_MAX_RATIO = float(os.getenv("VERIFY_MAX_RATIO", "0.25"))
+# La proporción solo dice algo con suficientes filas: si se revisó una y faltaba,
+# eso es 100 % de ausencias y no significa nada. Por debajo de esto manda el tope
+# absoluto, que es el que de verdad protege contra la avalancha.
+VERIFY_MIN_SAMPLE = int(os.getenv("VERIFY_MIN_SAMPLE", "8"))
+
 
 def _rebanada_actual(ahora=None):
     """Qué rebanada de ids toca revisar en esta corrida (0 .. VERIFY_PERIOD-1)."""
@@ -226,17 +242,14 @@ def _sweep_phantom_ids(db, st, table, cfg, summary):
         "AND updated_at < %s",
         [rebanada, now_ms() - COOLOFF_MS], VERIFY_MAX)
 
+    # --- Fase 1: solo mirar. Aquí no se escribe nada. ---
+    ausentes, corregir, consultados = [], [], 0
     for r in rows:
         try:
             real = confirm_on_platform(r, cfg["table"], client=st)
         except NotOnPlatform:
-            # El id apunta a algo que ya no existe. Se devuelve la fila al estado que
-            # de verdad tiene, y el barrido A la vuelve a registrar.
-            update(db, table, r["id"], {
-                "daijin_id": None, "status": "registering", "updated_at": now_ms(),
-            })
-            db.commit()
-            summary["phantom_cleared"] = summary.get("phantom_cleared", 0) + 1
+            consultados += 1
+            ausentes.append(r)
             continue
         except PlatformUnavailable:
             # No se pudo preguntar. Eso no prueba nada: se reintenta en su próxima vuelta.
@@ -246,13 +259,51 @@ def _sweep_phantom_ids(db, st, table, cfg, summary):
             summary["errors"] += 1
             continue
 
+        consultados += 1
         if real and str(real) != str(r.get("daijin_id")):
-            # Existe, pero con otro id: el local estaba mal escrito. Manda el de allá.
+            corregir.append((r, real))
+        else:
+            summary["verified"] = summary.get("verified", 0) + 1
+
+    # --- Fase 2: ¿es creíble lo que contestó la plataforma? ---
+    demasiados = len(ausentes) > VERIFY_MAX_CLEAR
+    proporcion_alta = (consultados >= VERIFY_MIN_SAMPLE
+                       and (len(ausentes) / consultados) > VERIFY_MAX_RATIO)
+    if ausentes and (demasiados or proporcion_alta):
+        summary["verify_aborted"] = summary.get("verify_aborted", 0) + len(ausentes)
+        try:
+            notificar(
+                motivo="barrido_caido", tipo_activo=table, lado="plataforma",
+                detalle=(f"{len(ausentes)} de {consultados} activos salieron como "
+                         f"inexistentes; no se tocó ninguno por si la lectura está mal"),
+                actor="cron")
+        except Exception:
+            pass
+        return
+
+    # --- Fase 3: aplicar. Ya se sabe que es un puñado, no una avalancha. ---
+    for r in ausentes:
+        # El id apunta a algo que ya no existe. Se devuelve la fila al estado que
+        # de verdad tiene, y el barrido A la vuelve a registrar.
+        try:
+            update(db, table, r["id"], {
+                "daijin_id": None, "status": "registering", "updated_at": now_ms(),
+            })
+            db.commit()
+            summary["phantom_cleared"] = summary.get("phantom_cleared", 0) + 1
+        except Exception:
+            db.rollback()
+            summary["errors"] += 1
+
+    for r, real in corregir:
+        # Existe, pero con otro id: el local estaba mal escrito. Manda el de allá.
+        try:
             update(db, table, r["id"], {"daijin_id": real, "updated_at": now_ms()})
             db.commit()
             summary["phantom_healed"] = summary.get("phantom_healed", 0) + 1
-        else:
-            summary["verified"] = summary.get("verified", 0) + 1
+        except Exception:
+            db.rollback()
+            summary["errors"] += 1
 
 # --------------------------------------------------------------------------- C. Ligas divergentes
 def _heal_vehicle(db, st, unit, catalog):
