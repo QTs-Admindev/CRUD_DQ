@@ -25,6 +25,7 @@ from shared.activation import (
 )
 import os
 import time
+from shared.alerta_critica import notificar, notificar_resumen_barrido
 from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
@@ -69,6 +70,13 @@ def handler(event, context):
         st = SmartTyreClient()
     except Exception as e:
         # Sin OpenAPI no podemos resolver ni verificar existencia; abortamos con detalle.
+        # Esto sí se avisa: mientras dure, NADA se cierra — ni altas, ni borrados,
+        # ni ligas. Es la única falla del cron que lo deja completamente inútil.
+        try:
+            notificar(motivo="barrido_caido", tipo_activo="barrido", lado="plataforma",
+                      detalle=str(e), actor="cron")
+        except Exception:
+            pass
         return {"error": f"SmartTyre auth falló: {e}"}
 
     summary = {"resolved": 0, "deleted": 0, "guard_blocked": 0,
@@ -86,6 +94,14 @@ def handler(event, context):
     _sweep_qbox_bindings(db, st, summary)
     _sweep_tyre_bindings(db, st, summary)
     _sweep_sensor_bindings(db, st, summary)
+
+    # Un solo aviso por corrida, y solo si algo quedó para una persona. Envuelto:
+    # el resumen del barrido es el resultado del trabajo y no se pierde porque
+    # WhatsApp esté caído.
+    try:
+        notificar_resumen_barrido(summary)
+    except Exception:
+        pass
 
     return {"status": "ok", **summary}
 

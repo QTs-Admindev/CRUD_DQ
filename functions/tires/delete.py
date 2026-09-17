@@ -1,6 +1,7 @@
 import re
 
 from shared.activation import liberar_llave_natural, llave_original
+from shared.alerta_critica import notificar
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -210,6 +211,17 @@ def handler(event, context):
             if status == GUARD:
                 # Sigue rechazando (o no es llanta de paquete): NO borrar en local
                 # para no quedar en medio-estado (local borrado, plataforma viva).
+                # Se avisa porque aquí se acabaron los reintentos: el cron tampoco
+                # lo va a poder cerrar, y hasta que alguien desvincule a mano la
+                # llanta queda sin poderse borrar y su folio sin liberarse.
+                # Envuelto en el punto de llamada, igual que la bitácora: avisar es
+                # accesorio y no puede cambiar lo que se le contesta al usuario.
+                try:
+                    notificar(motivo="borrado_rechazado", tipo_activo="llanta", rec=rec,
+                              lado="plataforma", detalle=msg or "guard sin detalle",
+                              event=event)
+                except Exception:
+                    pass
                 return error(409, "No se pudo completar el borrado")
     else:
         status, msg = DONE, None
