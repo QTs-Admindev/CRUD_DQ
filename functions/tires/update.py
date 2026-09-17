@@ -6,6 +6,7 @@ from shared.activation import MARCA_BORRADO
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
+from shared.db.lock import asset_lock
 from shared.db.ops import get_by_id, get_where, update
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
@@ -63,20 +64,26 @@ def handler(event, context):
     # El índice de la tabla es (prefix, folio, company_id), o sea que la base sola
     # deja pasar el repetido si el prefijo difiere. Por eso la regla se aplica aquí
     # y no se delega al índice, igual que hace el alta.
-    if "folio" in cambios and cambios["folio"] != tire.get("folio"):
-        ocupado = get_where(
-            db, t("tires"),
-            "folio = %s AND company_id = %s AND id <> %s "
-            "AND (is_deleted IS NULL OR is_deleted = 0)",
-            [cambios["folio"], tire.get("company_id"), tire_id], 1)
-        if ocupado:
-            return error(409, f"El folio '{cambios['folio']}' ya está usado en esta compañía")
-
     cambios["updated_at"] = now_ms()
 
+    # El lock cubre de mirar a escribir. Sin él, dos ediciones simultáneas al mismo
+    # folio lo ven libre las dos y las dos escriben: el índice no las detiene porque
+    # es (prefix, folio, company_id). Es el mismo lock que toma el alta, con la misma
+    # llave, así que también serializa un alta contra una edición.
     try:
-        record = update(db, t("tires"), tire_id, cambios)
-        db.commit()
+        with asset_lock(db, f"folio:{tire.get('company_id')}:{cambios.get('folio')}"):
+            if "folio" in cambios and cambios["folio"] != tire.get("folio"):
+                ocupado = get_where(
+                    db, t("tires"),
+                    "folio = %s AND company_id = %s AND id <> %s "
+                    "AND (is_deleted IS NULL OR is_deleted = 0)",
+                    [cambios["folio"], tire.get("company_id"), tire_id], 1)
+                if ocupado:
+                    return error(409,
+                                 f"El folio '{cambios['folio']}' ya está usado en esta compañía")
+
+            record = update(db, t("tires"), tire_id, cambios)
+            db.commit()
     except Exception as e:
         db.rollback()
         # (prefix, folio, company_id) es UNIQUE. Un choque es un error del usuario,

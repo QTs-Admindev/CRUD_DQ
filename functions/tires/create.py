@@ -6,6 +6,7 @@ from shared.activation import liberar_llave_natural
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
+from shared.db.lock import asset_lock
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
 from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
@@ -114,60 +115,67 @@ def handler(event, context):
     # the upstream record may already be mid-insert by a concurrent racer, so step 3 must
     # do a confirming GET-before-POST (assume_new=False) instead of blindly inserting.
     resumed = False
+    # Sin exclusión mutua la regla del folio es solo una costumbre: dos altas
+    # simultáneas con el mismo folio consultan, las dos lo ven libre y las dos
+    # insertan. El índice no las detiene, porque es (prefix, folio, company_id) y
+    # basta con que el prefijo difiera. El lock nombrado por folio+compañía cierra
+    # justo esa ventana, la que va de mirar a escribir.
+    # Es la red mientras el índice no se pueda apretar; cuando se apriete, sobra.
     try:
-        existing = _fila_viva()
-        if existing and existing.get("prefix") != body.prefix:
-            return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
-        if existing and existing.get("daijin_id"):
-            # Self-heal: verify the stored daijin_id still resolves in the platform; re-create
-            # upstream (tyreCode == our local id) if it is a phantom.
-            return heal_on_resume(
-                db, event, context, existing=existing, asset_type="tire", table="tires",
-                natural_key=body.folio,
-                list_path="/smartyre/openapi/tyre/list",
-                list_filter={"tyreCode": str(existing["id"])},
-                insert_path="/smartyre/openapi/tyre/insert",
-                insert_payload={
-                    "tyreCode": str(existing["id"]),
-                    "tyreBrandId": TYRE_BRAND_ID,
-                    "tyreSizeId": TYRE_SIZE_ID,
-                    "tyrePattern": TYRE_PATTERN,
-                    "initialTreadDepth": str(existing.get("current_depth") or 0),
-                    "totalDistance": existing.get("tire_mileage") or 0,
-                })
-        if existing:
-            local_id = existing["id"]
-            resumed = True
-        else:
-            try:
-                rec = insert(db, t("tires"), tire_row)
-                db.commit()
-                local_id = rec["id"]
-            except Exception:
-                db.rollback()
-                # UNIQUE(folio, company_id): a soft-deleted row may hold it. Don't reuse
-                # that dead row (stays deleted), but free its folio and insert a fresh row.
-                dead = get_by_fields(db, t("tires"), key)
-                if dead and dead.get("is_deleted"):
-                    update(db, t("tires"), dead["id"], {
-                        **liberar_llave_natural(dead, "tires"),
-                        "updated_at": now_ms(),
+        with asset_lock(db, f"folio:{body.company_id}:{body.folio}"):
+            existing = _fila_viva()
+            if existing and existing.get("prefix") != body.prefix:
+                return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+            if existing and existing.get("daijin_id"):
+                # Self-heal: verify the stored daijin_id still resolves in the platform; re-create
+                # upstream (tyreCode == our local id) if it is a phantom.
+                return heal_on_resume(
+                    db, event, context, existing=existing, asset_type="tire", table="tires",
+                    natural_key=body.folio,
+                    list_path="/smartyre/openapi/tyre/list",
+                    list_filter={"tyreCode": str(existing["id"])},
+                    insert_path="/smartyre/openapi/tyre/insert",
+                    insert_payload={
+                        "tyreCode": str(existing["id"]),
+                        "tyreBrandId": TYRE_BRAND_ID,
+                        "tyreSizeId": TYRE_SIZE_ID,
+                        "tyrePattern": TYRE_PATTERN,
+                        "initialTreadDepth": str(existing.get("current_depth") or 0),
+                        "totalDistance": existing.get("tire_mileage") or 0,
                     })
-                    db.commit()
+            if existing:
+                local_id = existing["id"]
+                resumed = True
+            else:
+                try:
                     rec = insert(db, t("tires"), tire_row)
                     db.commit()
                     local_id = rec["id"]
-                else:
-                    # Race with a concurrent LIVE create.
-                    existing = _fila_viva()
-                    if not existing:
-                        raise
-                    if existing.get("prefix") != body.prefix:
-                        return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
-                    if existing.get("daijin_id"):
-                        return ok(existing)
-                    local_id = existing["id"]
-                    resumed = True
+                except Exception:
+                    db.rollback()
+                    # UNIQUE(folio, company_id): a soft-deleted row may hold it. Don't reuse
+                    # that dead row (stays deleted), but free its folio and insert a fresh row.
+                    dead = get_by_fields(db, t("tires"), key)
+                    if dead and dead.get("is_deleted"):
+                        update(db, t("tires"), dead["id"], {
+                            **liberar_llave_natural(dead, "tires"),
+                            "updated_at": now_ms(),
+                        })
+                        db.commit()
+                        rec = insert(db, t("tires"), tire_row)
+                        db.commit()
+                        local_id = rec["id"]
+                    else:
+                        # Race with a concurrent LIVE create.
+                        existing = _fila_viva()
+                        if not existing:
+                            raise
+                        if existing.get("prefix") != body.prefix:
+                            return error(409, f"El folio '{body.folio}' ya está usado en esta compañía")
+                        if existing.get("daijin_id"):
+                            return ok(existing)
+                        local_id = existing["id"]
+                        resumed = True
     except Exception as e:
         db.rollback()
         return sync_fail(f"DB error (insert tire): {e}")
