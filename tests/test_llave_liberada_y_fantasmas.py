@@ -287,8 +287,21 @@ def test_solo_se_revisa_la_rebanada_que_toca_y_con_tope():
                                      _cfg(), {"errors": 0})
     _db, _tabla, where, params, tope = consulta.call_args[0]
     assert "is_deleted = 0" in where and "id %" in where
-    assert params == [reconcile._rebanada_actual()]
+    assert params[0] == reconcile._rebanada_actual()
     assert tope == reconcile.VERIFY_MAX
+
+
+def test_no_se_toca_lo_que_un_usuario_acaba_de_modificar():
+    """La plataforma tarda en dejar ver lo recién insertado; por eso el alta hace GET
+    después del POST. Sin enfriamiento, una llanta creada hace 30 segundos daría
+    "no está" y el barrido le borraría el id a un activo sano."""
+    with patch.object(reconcile, "get_where", return_value=[]) as consulta,          patch.object(reconcile, "confirm_on_platform"):
+        reconcile._sweep_phantom_ids(MagicMock(), MagicMock(), "sensors",
+                                     _cfg(), {"errors": 0})
+    _db, _tabla, where, params, _tope = consulta.call_args[0]
+    assert "updated_at" in where, "el barrido no respeta el enfriamiento"
+    corte = params[-1]
+    assert corte <= reconcile.now_ms() - reconcile.COOLOFF_MS
 
 
 # ─── 1c. Una sola marca para todo el repo ────────────────────────────────────

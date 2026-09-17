@@ -198,10 +198,17 @@ def _sweep_phantom_ids(db, st, table, cfg, summary):
     "la plataforma dice que no está" de "no se pudo preguntar", y solo el primero limpia.
     """
     rebanada = _rebanada_actual()
+    # Cool-off, igual que los barridos de ligas: no tocar filas que un usuario acaba
+    # de modificar. Importa especialmente aquí porque la plataforma tarda en dejar
+    # ver lo recién insertado — por eso el alta hace GET despues del POST. Sin esta
+    # guarda, una llanta creada hace 30 segundos podría dar "no está" y el barrido le
+    # borraría el id de un activo perfectamente sano. Se recupera sola en la corrida
+    # siguiente, pero mientras tanto la pantalla la muestra sin sincronizar.
     rows = get_where(
         db, table,
-        f"daijin_id IS NOT NULL AND is_deleted = 0 AND (id %% {VERIFY_PERIOD}) = %s",
-        [rebanada], VERIFY_MAX)
+        f"daijin_id IS NOT NULL AND is_deleted = 0 AND (id %% {VERIFY_PERIOD}) = %s "
+        "AND updated_at < %s",
+        [rebanada, now_ms() - COOLOFF_MS], VERIFY_MAX)
 
     for r in rows:
         try:
