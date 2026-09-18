@@ -20,6 +20,12 @@ Barridos idempotentes sobre los activos:
 Es best-effort y acotado (LIMIT por barrido): si algo falla, se retoma en la
 siguiente corrida. Cada fila va en su propio try para que una no tumbe al resto.
 """
+from shared.activation import (
+    NotOnPlatform, PlatformUnavailable, confirm_on_platform, liberar_llave_natural,
+)
+import os
+import time
+from shared.alerta_critica import notificar, notificar_resumen_barrido
 from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
@@ -64,20 +70,38 @@ def handler(event, context):
         st = SmartTyreClient()
     except Exception as e:
         # Sin OpenAPI no podemos resolver ni verificar existencia; abortamos con detalle.
+        # Esto sí se avisa: mientras dure, NADA se cierra — ni altas, ni borrados,
+        # ni ligas. Es la única falla del cron que lo deja completamente inútil.
+        try:
+            notificar(motivo="barrido_caido", tipo_activo="barrido", lado="plataforma",
+                      detalle=str(e), actor="cron")
+        except Exception:
+            pass
         return {"error": f"SmartTyre auth falló: {e}"}
 
     summary = {"resolved": 0, "deleted": 0, "guard_blocked": 0,
-               "rebound": 0, "binding_pending": 0, "errors": 0}
+               "rebound": 0, "binding_pending": 0, "errors": 0,
+               "verified": 0, "phantom_cleared": 0, "phantom_healed": 0,
+               "verify_skipped": 0, "verify_aborted": 0}
 
     for cfg in ASSETS:
         table = t(cfg["table"])
         _sweep_registering(db, st, table, cfg, summary)
         _sweep_pending_deletes(db, st, table, cfg, summary)
+        _sweep_phantom_ids(db, st, table, cfg, summary)
 
     # C. Ligas divergentes (activos ya sincronizados cuya relación no está en la plataforma).
     _sweep_qbox_bindings(db, st, summary)
     _sweep_tyre_bindings(db, st, summary)
     _sweep_sensor_bindings(db, st, summary)
+
+    # Un solo aviso por corrida, y solo si algo quedó para una persona. Envuelto:
+    # el resumen del barrido es el resultado del trabajo y no se pierde porque
+    # WhatsApp esté caído.
+    try:
+        notificar_resumen_barrido(summary)
+    except Exception:
+        pass
 
     return {"status": "ok", **summary}
 
@@ -93,7 +117,12 @@ def _sweep_registering(db, st, table, cfg, summary):
     de negocio (una llanta 'used', un sensor 'inactive'), se le completa el id y se
     respeta lo que el usuario puso.
     """
-    rows = get_where(db, table, "daijin_id IS NULL AND is_deleted = 0", [], BATCH)
+    # order="DESC": lo más reciente primero. El selector por `daijin_id IS NULL` abarca
+    # también filas viejas que nunca tuvieron id y que quizá no existan en la plataforma;
+    # con orden ascendente y un cupo de BATCH, ese rezago se comería la corrida entera y
+    # un create atorado de hoy no se reconciliaría nunca.
+    rows = get_where(db, table, "daijin_id IS NULL AND is_deleted = 0", [], BATCH,
+                     order="DESC")
     for r in rows:
         try:
             found = _find_id(st, cfg["list_path"], cfg["key"](r))
@@ -117,12 +146,12 @@ def _sweep_pending_deletes(db, st, table, cfg, summary):
         try:
             status, msg = attempt_delete(cfg["resource"], str(r["daijin_id"]))
             if status == DONE:
-                _clear_daijin(db, table, r["id"])
+                _clear_daijin(db, table, r, cfg["table"])
                 summary["deleted"] += 1
             elif status == GUARD:
                 # ¿"ya no existe" (idempotente) o un guard real (ej. 531 con sensor)?
                 if _find_id(st, cfg["list_path"], cfg["key"](r)) is None:
-                    _clear_daijin(db, table, r["id"])  # ya estaba borrado en la plataforma
+                    _clear_daijin(db, table, r, cfg["table"])  # ya no estaba allá
                     summary["deleted"] += 1
                 else:
                     summary["guard_blocked"] += 1  # necesita acción manual (desvincular)
@@ -132,10 +161,149 @@ def _sweep_pending_deletes(db, st, table, cfg, summary):
             summary["errors"] += 1
 
 
-def _clear_daijin(db, table, rid):
-    update(db, table, rid, {"daijin_id": None, "updated_at": now_ms()})
+def _clear_daijin(db, table, rec, resource):
+    """Cierra el borrado: suelta el id de la plataforma y libera la llave natural.
+
+    La llave se libera AQUÍ y no cuando el borrado se marcó pendiente, porque este
+    mismo barrido la necesita para buscar el activo allá (`cfg["key"]`). Si se hubiera
+    liberado antes, la búsqueda no encontraría nada y "no está" se confundiría con
+    "ya se borró".
+    """
+    update(db, table, rec["id"], {
+        "daijin_id": None, "updated_at": now_ms(),
+        **liberar_llave_natural(rec, resource),
+    })
     db.commit()
 
+
+
+# --------------------------------------------------------------------------- D. Id fantasma
+# Cuántas corridas del cron dan una vuelta completa a la flota. El cron corre cada
+# 5 minutos, así que 288 corridas son 24 horas: cada activo sincronizado se revisa
+# una vez al día, y cada corrida toca solo 1/288 de las filas (unas 38 de 11,000).
+# No hace falta guardar estado entre corridas ni una columna nueva: la rebanada sale
+# del reloj y del id.
+VERIFY_PERIOD = int(os.getenv("VERIFY_PERIOD_RUNS", "288"))
+VERIFY_MAX = int(os.getenv("VERIFY_MAX_ROWS", "80"))
+
+# Cortacircuitos. Que la plataforma conteste "no está" para UN activo es normal:
+# lo borraron allá. Que lo conteste para MUCHOS a la vez no es un dato, es un
+# síntoma — el endpoint cambió de forma, el filtro por organización dejó de
+# aplicar, el token quedó con otro alcance. En ese caso los "no está" son falsos y
+# obedecerlos desactivaría la flota entera: 80 por corrida, 288 corridas al día.
+#
+# Por eso el barrido primero MIRA y luego escribe: si la proporción de ausencias
+# pasa del umbral, no toca nada y avisa. Prefiere quedarse corto un día a vaciar
+# los ids de todos.
+VERIFY_MAX_CLEAR = int(os.getenv("VERIFY_MAX_CLEAR", "10"))
+VERIFY_MAX_RATIO = float(os.getenv("VERIFY_MAX_RATIO", "0.25"))
+# La proporción solo dice algo con suficientes filas: si se revisó una y faltaba,
+# eso es 100 % de ausencias y no significa nada. Por debajo de esto manda el tope
+# absoluto, que es el que de verdad protege contra la avalancha.
+VERIFY_MIN_SAMPLE = int(os.getenv("VERIFY_MIN_SAMPLE", "8"))
+
+
+def _rebanada_actual(ahora=None):
+    """Qué rebanada de ids toca revisar en esta corrida (0 .. VERIFY_PERIOD-1)."""
+    t0 = ahora if ahora is not None else time.time()
+    return int(t0 // 300) % VERIFY_PERIOD
+
+
+def _sweep_phantom_ids(db, st, table, cfg, summary):
+    """D. Revisa que los activos YA sincronizados sigan existiendo en la plataforma.
+
+    Los otros barridos alcanzan a un activo a través de lo que tiene armado: la llanta
+    porque está montada, el sensor porque está en una llanta, el Qbox porque está en una
+    unidad. Un activo que no está armado con nada no tiene por dónde ser alcanzado, así
+    que su `daijin_id` no se vuelve a comprobar nunca.
+
+    Medido en producción: 2,073 activos con id guardado que nadie revisaba, el 19 % del
+    total. Son los que están en inventario: sensor sin montar, llanta desmontada, unidad
+    sin Qbox. Si ese id quedó mal o el activo se borró en la plataforma, nadie se entera
+    hasta que alguien intenta usarlo, y ahí falla sin explicación.
+
+    Cuando el id resulta ser fantasma NO se re-registra aquí: se limpia el `daijin_id` y
+    se devuelve la fila a 'registering', que es su estado real. El barrido A la recoge en
+    la corrida siguiente y hace el registro con el camino que ya existe y ya está probado.
+
+    Un fallo de lectura NUNCA se trata como ausencia: `confirm_on_platform` distingue
+    "la plataforma dice que no está" de "no se pudo preguntar", y solo el primero limpia.
+    """
+    rebanada = _rebanada_actual()
+    # Cool-off, igual que los barridos de ligas: no tocar filas que un usuario acaba
+    # de modificar. Importa especialmente aquí porque la plataforma tarda en dejar
+    # ver lo recién insertado — por eso el alta hace GET despues del POST. Sin esta
+    # guarda, una llanta creada hace 30 segundos podría dar "no está" y el barrido le
+    # borraría el id de un activo perfectamente sano. Se recupera sola en la corrida
+    # siguiente, pero mientras tanto la pantalla la muestra sin sincronizar.
+    rows = get_where(
+        db, table,
+        f"daijin_id IS NOT NULL AND is_deleted = 0 AND (id %% {VERIFY_PERIOD}) = %s "
+        "AND updated_at < %s",
+        [rebanada, now_ms() - COOLOFF_MS], VERIFY_MAX)
+
+    # --- Fase 1: solo mirar. Aquí no se escribe nada. ---
+    ausentes, corregir, consultados = [], [], 0
+    for r in rows:
+        try:
+            real = confirm_on_platform(r, cfg["table"], client=st)
+        except NotOnPlatform:
+            consultados += 1
+            ausentes.append(r)
+            continue
+        except PlatformUnavailable:
+            # No se pudo preguntar. Eso no prueba nada: se reintenta en su próxima vuelta.
+            summary["verify_skipped"] = summary.get("verify_skipped", 0) + 1
+            continue
+        except Exception:
+            summary["errors"] += 1
+            continue
+
+        consultados += 1
+        if real and str(real) != str(r.get("daijin_id")):
+            corregir.append((r, real))
+        else:
+            summary["verified"] = summary.get("verified", 0) + 1
+
+    # --- Fase 2: ¿es creíble lo que contestó la plataforma? ---
+    demasiados = len(ausentes) > VERIFY_MAX_CLEAR
+    proporcion_alta = (consultados >= VERIFY_MIN_SAMPLE
+                       and (len(ausentes) / consultados) > VERIFY_MAX_RATIO)
+    if ausentes and (demasiados or proporcion_alta):
+        summary["verify_aborted"] = summary.get("verify_aborted", 0) + len(ausentes)
+        try:
+            notificar(
+                motivo="barrido_caido", tipo_activo=table, lado="plataforma",
+                detalle=(f"{len(ausentes)} de {consultados} activos salieron como "
+                         f"inexistentes; no se tocó ninguno por si la lectura está mal"),
+                actor="cron")
+        except Exception:
+            pass
+        return
+
+    # --- Fase 3: aplicar. Ya se sabe que es un puñado, no una avalancha. ---
+    for r in ausentes:
+        # El id apunta a algo que ya no existe. Se devuelve la fila al estado que
+        # de verdad tiene, y el barrido A la vuelve a registrar.
+        try:
+            update(db, table, r["id"], {
+                "daijin_id": None, "status": "registering", "updated_at": now_ms(),
+            })
+            db.commit()
+            summary["phantom_cleared"] = summary.get("phantom_cleared", 0) + 1
+        except Exception:
+            db.rollback()
+            summary["errors"] += 1
+
+    for r, real in corregir:
+        # Existe, pero con otro id: el local estaba mal escrito. Manda el de allá.
+        try:
+            update(db, table, r["id"], {"daijin_id": real, "updated_at": now_ms()})
+            db.commit()
+            summary["phantom_healed"] = summary.get("phantom_healed", 0) + 1
+        except Exception:
+            db.rollback()
+            summary["errors"] += 1
 
 # --------------------------------------------------------------------------- C. Ligas divergentes
 def _heal_vehicle(db, st, unit, catalog):

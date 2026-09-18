@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+from shared.activation import MARCA_BORRADO, llave_original
+
 from functions.sensors import bulk_create as mod
 
 
@@ -141,8 +143,11 @@ def test_frees_soft_deleted_code_and_reinserts(wire):
 
     body = _body(resp)
     assert body["summary"]["inserted"] == 1
-    # dead row keeps history under a renamed code
-    assert store.rows[3]["sensorCode"] == "DDDDDDDDDDD4__del3"
+    # la fila muerta conserva su historia, pero con el código ya marcado: una sola
+    # marca para todo el repo (la misma que pone el borrado), así `llave_original`
+    # recupera el valor en cualquier caso.
+    assert store.rows[3]["sensorCode"] == "DDDDDDDDDDD4" + MARCA_BORRADO + "3"
+    assert llave_original(store.rows[3]["sensorCode"]) == "DDDDDDDDDDD4"
     # fresh live row owns the original code
     assert store.inserted[0]["sensorCode"] == "DDDDDDDDDDD4"
 

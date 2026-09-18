@@ -30,7 +30,7 @@ def wire(monkeypatch):
     def setup(mod, rows):
         captured = {}
 
-        def fake_get_where(db, table, where_sql, params=(), limit=200):
+        def fake_get_where(db, table, where_sql, params=(), limit=200, order="ASC"):
             captured["table"] = table
             captured["where_sql"] = where_sql
             captured["params"] = list(params)

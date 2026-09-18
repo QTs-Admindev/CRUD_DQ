@@ -27,6 +27,7 @@ import os
 import boto3
 from pydantic import BaseModel, Field, ValidationError
 
+from shared.activation import liberar_llave_natural
 from shared.audit import audit, actor_from
 from shared.config import t
 from shared.db.connection import get_db
@@ -112,7 +113,7 @@ def handler(event, context):
 
         for dead in dead_to_free:
             update(db, t("tboxes"), dead["id"], {
-                "tboxCode": f"{dead['tboxCode']}__del{dead['id']}",
+                **liberar_llave_natural(dead, "tboxes"),
                 "updated_at": now_ms(),
             })
 

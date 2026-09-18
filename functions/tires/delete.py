@@ -1,5 +1,7 @@
 import re
 
+from shared.activation import liberar_llave_natural, llave_original
+from shared.alerta_critica import notificar
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -101,7 +103,12 @@ def _recover_package_platform(db, rid, daijin_id, m):
         # DONE o GUARD (p. ej. "ya no existe"): el sensor ya no bloquea. Limpiar el
         # vínculo local del sensor (sobrevive sin daijin_id).
         try:
-            update(db, t("sensors"), sensor["id"], {"daijin_id": None, "updated_at": now_ms()})
+            # Vuelve a 'registering': sin id en la plataforma, ese es su estado real, y
+            # así el barrido de reconciliación sabe que debe RE-CREARLO cuando se
+            # reutilice, en vez de encontrarse una fila 'active' sin id (que es
+            # justamente el estado corrupto que el resto del sistema ya no permite).
+            update(db, t("sensors"), sensor["id"],
+                   {"daijin_id": None, "status": "registering", "updated_at": now_ms()})
             db.commit()
         except Exception:
             db.rollback()
@@ -204,6 +211,17 @@ def handler(event, context):
             if status == GUARD:
                 # Sigue rechazando (o no es llanta de paquete): NO borrar en local
                 # para no quedar en medio-estado (local borrado, plataforma viva).
+                # Se avisa porque aquí se acabaron los reintentos: el cron tampoco
+                # lo va a poder cerrar, y hasta que alguien desvincule a mano la
+                # llanta queda sin poderse borrar y su folio sin liberarse.
+                # Envuelto en el punto de llamada, igual que la bitácora: avisar es
+                # accesorio y no puede cambiar lo que se le contesta al usuario.
+                try:
+                    notificar(motivo="borrado_rechazado", tipo_activo="llanta", rec=rec,
+                              lado="plataforma", detalle=msg or "guard sin detalle",
+                              event=event)
+                except Exception:
+                    pass
                 return error(409, "No se pudo completar el borrado")
     else:
         status, msg = DONE, None
@@ -218,10 +236,13 @@ def handler(event, context):
             return pending_delete(rec, msg)
         rec = update(db, t("tires"), rid, {
             "is_deleted": 1, "daijin_id": None, "updated_at": now_ms(),
+            # Libera el folio/código: la fila se queda, pero su llave natural no
+            # puede seguir ocupando el índice UNIQUE. Ver liberar_llave_natural.
+            **liberar_llave_natural(rec, "tires"),
         })
         db.commit()
         audit(db, event, context, action="update", asset_type="tire", asset_id=rid,
-              natural_key=rec.get("folio"), company_id=rec.get("company_id"),
+              natural_key=llave_original(rec.get("folio")), company_id=rec.get("company_id"),
               daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
         return ok(rec)
     except Exception as e:

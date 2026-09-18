@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.activation import liberar_llave_natural
 from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
@@ -103,7 +104,7 @@ def handler(event, context):
                 if dead_rows:
                     for dead in dead_rows:
                         update(db, t("units"), dead["id"], {
-                            "unit_identifier": f"{body.unit_identifier}__del{dead['id']}",
+                            **liberar_llave_natural(dead, "units"),
                             "updated_at": now_ms(),
                         })
                     db.commit()

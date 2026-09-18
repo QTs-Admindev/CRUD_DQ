@@ -13,6 +13,15 @@ MAX_LIMIT = 5000
 # filas" de "hay 3000 y te di las primeras 300": el corte era silencioso.
 TRUE_VALUES = {"1", "true", "True", "yes"}
 
+# Tope del desplazamiento. Muy por encima de cualquier inventario real; existe para que
+# un valor absurdo sea un 422 y no un error de MySQL convertido en 500.
+MAX_OFFSET = 1_000_000
+
+# Parámetros con significado propio: nunca se interpretan como filtro de columna. Van
+# explícitos y no por accidente de que ninguna columna se llame así hoy.
+RESERVED_PARAMS = {"company_id", "limit", "offset", "paged", "is_deleted",
+                   "created_at", "updated_at"}
+
 # Whitelist recurso -> columnas + comportamiento.
 #   prefixed: la tabla usa TABLE_PREFIX (activos); los catálogos son tablas REALES.
 #   soft: tiene is_deleted (nunca listamos borrados).
@@ -93,9 +102,12 @@ def handler(event, context):
     offset = 0
     if qs.get("offset"):
         try:
-            offset = max(0, int(qs["offset"]))
+            offset = int(qs["offset"])
         except ValueError:
             return error(422, "offset must be an integer")
+        if offset < 0 or offset > MAX_OFFSET:
+            # Sin tope, un offset absurdo revienta en MySQL y sale como 500 opaco.
+            return error(422, f"offset must be between 0 and {MAX_OFFSET}")
 
     paged = str(qs.get("paged") or "") in TRUE_VALUES
 

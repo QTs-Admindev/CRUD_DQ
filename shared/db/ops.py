@@ -85,13 +85,18 @@ def soft_delete(db, table: str, record_id: int) -> dict | None:
     return get_by_id(db, table, record_id)
 
 
-def get_where(db, table: str, where_sql: str, params=(), limit: int = 200) -> list[dict]:
+def get_where(db, table: str, where_sql: str, params=(), limit: int = 200,
+              order: str = "ASC") -> list[dict]:
     """Lista filas por una condición SQL libre (para la reconciliación).
 
     where_sql es una condición con placeholders %s (ej. "status = %s" o
-    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC (procesar lo más viejo).
+    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC por omisión (procesar lo
+    más viejo); `order="DESC"` para atender primero lo más reciente, que es lo que
+    necesita un barrido acotado cuando puede haber un rezago histórico que nunca
+    resuelve y que si no ocuparía el cupo entero en cada corrida.
     """
-    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id ASC LIMIT {int(limit)}"
+    direction = "DESC" if str(order).upper() == "DESC" else "ASC"
+    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id {direction} LIMIT {int(limit)}"
     with db.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(sql, list(params))
         return list(cur.fetchall())
