@@ -20,12 +20,16 @@ simply importing the same Excel again.
 
 Mirrors functions/sensors/bulk_create.py; the only differences are the table,
 the natural key (tboxCode) and the worker it launches.
+
+Lote (`batch_code`): the identifier the uploader types for the shipment. New rows
+are born with it; re-queued rows get it only if they had none. A Qbox that
+already has a lote keeps it: it belongs to the batch it arrived in.
 """
 import json
 import os
 
 import boto3
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from shared.activation import liberar_llave_natural
 from shared.audit import audit, actor_from
@@ -34,7 +38,7 @@ from shared.db.connection import get_db
 from shared.db.ops import get_in, insert_many, update
 from shared.utils.clock import now_ms
 from shared.utils.response import error
-from shared.utils.validators import HEX12
+from shared.utils.validators import HEX12, normalize_batch_code
 
 MAX_CODES = 5000
 
@@ -43,6 +47,13 @@ class BulkCreateRequest(BaseModel):
     # company_id optional: None leaves the whole batch in inventory (unassigned).
     company_id: int | None = None
     tbox_codes: list[str] = Field(min_length=1, max_length=MAX_CODES)
+    # Optional for backward compatibility: callers that don't send it keep working.
+    batch_code: str | None = None
+
+    @field_validator("batch_code")
+    @classmethod
+    def _check_batch_code(cls, v: str | None) -> str | None:
+        return normalize_batch_code(v)
 
 
 def _invoke_worker(ids: list[int], actor: str) -> bool:
@@ -95,6 +106,7 @@ def handler(event, context):
 
         already_active: list[str] = []
         requeue_ids: list[int] = []
+        requeue_without_batch: list[int] = []
         dead_to_free: list[dict] = []
         new_codes: list[str] = []
         for code in valid:
@@ -110,6 +122,8 @@ def handler(event, context):
                 already_active.append(code)
             else:
                 requeue_ids.append(row["id"])
+                if not row.get("batch_code"):
+                    requeue_without_batch.append(row["id"])
 
         for dead in dead_to_free:
             update(db, t("tboxes"), dead["id"], {
@@ -117,12 +131,18 @@ def handler(event, context):
                 "updated_at": now_ms(),
             })
 
+        # A re-queued row that never got a lote (a failed earlier import without
+        # one) takes this batch's. One that already has a lote keeps it.
+        if body.batch_code:
+            for rid in requeue_without_batch:
+                update(db, t("tboxes"), rid, {"batch_code": body.batch_code, "updated_at": now_ms()})
+
         # 4. Insert the new ones as `registering` in one bulk statement
         ts = now_ms()
         insert_many(
             db, t("tboxes"),
-            ["tboxCode", "company_id", "status", "updated_at"],
-            [(code, body.company_id, "registering", ts) for code in new_codes],
+            ["tboxCode", "company_id", "status", "batch_code", "updated_at"],
+            [(code, body.company_id, "registering", body.batch_code, ts) for code in new_codes],
         )
         db.commit()  # durable before launching the worker
 
@@ -147,6 +167,7 @@ def handler(event, context):
           natural_key=f"bulk:{len(valid)}", company_id=body.company_id,
           result="pending",
           payload={
+              "batch_code": body.batch_code,
               "received": len(body.tbox_codes),
               "inserted": len(inserted_ids),
               "requeued": len(requeue_ids),
@@ -165,6 +186,7 @@ def handler(event, context):
         "body": json.dumps({
             "status": "registering",
             "message": "Batch queued (syncing in the background)",
+            "batch_code": body.batch_code,
             "summary": {
                 "received": len(body.tbox_codes),
                 "queued": len(queued_ids),

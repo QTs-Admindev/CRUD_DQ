@@ -12,7 +12,7 @@ from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending, SYNC_ERROR, sync_fail
-from shared.utils.validators import validate_hex12
+from shared.utils.validators import normalize_batch_code, validate_hex12
 
 
 class CreateTboxRequest(BaseModel):
@@ -25,6 +25,14 @@ class CreateTboxRequest(BaseModel):
     @classmethod
     def _check_tbox_code(cls, v: str) -> str:
         return validate_hex12(v, "tbox_code")
+
+    # Lote del envío, opcional en el alta de uno por uno.
+    batch_code: str | None = None
+
+    @field_validator("batch_code")
+    @classmethod
+    def _check_batch_code(cls, v: str | None) -> str | None:
+        return normalize_batch_code(v)
 
 
 def handler(event, context):
@@ -59,6 +67,7 @@ def handler(event, context):
                     "tboxCode": body.tbox_code,
                     "company_id": body.company_id,
                     "status": "registering",
+                    "batch_code": body.batch_code,
                     "updated_at": now_ms(),
                 })
                 db.commit()
@@ -79,6 +88,7 @@ def handler(event, context):
                         "tboxCode": body.tbox_code,
                         "company_id": body.company_id,
                         "status": "registering",
+                    "batch_code": body.batch_code,
                         "updated_at": now_ms(),
                     })
                     db.commit()
@@ -95,6 +105,15 @@ def handler(event, context):
     except Exception as e:
         db.rollback()
         return sync_fail(f"DB error (insert tbox): {e}")
+
+    # Lote: un alta que reanuda una fila sin lote se lo pone; una que ya tiene lote lo
+    # conserva (pertenece al lote en el que llegó). Si falla, el alta sigue igual.
+    if body.batch_code and existing and not existing.get("batch_code"):
+        try:
+            update(db, t("tboxes"), local_id, {"batch_code": body.batch_code, "updated_at": now_ms()})
+            db.commit()
+        except Exception:
+            db.rollback()
 
     # 3. Sync with the platform (idempotent). Natural key = tboxCode (external hardware code).
     try:
