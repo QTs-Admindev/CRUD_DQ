@@ -10,15 +10,18 @@ def _make_get_where(reg=None, dele=None):
     reg = reg or {}
     dele = dele or {}
 
-    def gw(db, table, where_sql, params=(), limit=100):
+    def gw(db, table, where_sql, params=(), limit=100, order="ASC"):
         # Barridos de ligas (C: Qbox/llanta/sensor): se prueban en test_reconcile_bindings.
         if any(k in where_sql for k in
                ("tbox_id IS NOT NULL", "unit_id IS NOT NULL", "sensor_id IS NOT NULL")):
             return []
-        if "status" in where_sql:                       # sweep de registering
+        if "daijin_id IS NULL" in where_sql:            # sweep de creates sin sincronizar
             return list(reg.get(table, []))
-        if "daijin_id IS NOT NULL" in where_sql:        # sweep de borrados pendientes
+        if "is_deleted = 1" in where_sql:               # sweep de borrados pendientes
             return list(dele.get(table, []))
+        # Barrido D (ids fantasma): vive en test_llave_liberada_y_fantasmas.
+        # Distinguirlo importa: su WHERE tambien dice "daijin_id IS NOT NULL",
+        # y si cayera aqui recibiria las filas del barrido de borrados.
         return []
     return gw
 
@@ -38,7 +41,7 @@ def _wire(monkeypatch, get_where, find_id, attempt):
 def test_resolves_registering_create(monkeypatch):
     updates = _wire(
         monkeypatch,
-        _make_get_where(reg={"units": [{"id": 1}]}),
+        _make_get_where(reg={"units": [{"id": 1, "status": "registering"}]}),
         find_id=lambda st, path, key: "500",
         attempt=lambda *a, **k: (reconcile.DONE, None),
     )
@@ -104,7 +107,7 @@ def test_transient_delete_left_for_next_run(monkeypatch):
 def test_registering_not_yet_in_platform_is_skipped(monkeypatch):
     updates = _wire(
         monkeypatch,
-        _make_get_where(reg={"sensors": [{"id": 5, "sensorCode": "AA"}]}),
+        _make_get_where(reg={"sensors": [{"id": 5, "sensorCode": "AA", "status": "registering"}]}),
         find_id=lambda *a: None,                     # todavía no propaga
         attempt=lambda *a, **k: (reconcile.DONE, None),
     )
@@ -126,7 +129,7 @@ def test_error_in_one_row_does_not_stop_the_rest(monkeypatch):
 
     updates = _wire(
         monkeypatch,
-        _make_get_where(reg={"units": [{"id": 1}, {"id": 2}]}),
+        _make_get_where(reg={"units": [{"id": 1, "status": "registering"}, {"id": 2, "status": "registering"}]}),
         find_id=flaky_find,
         attempt=lambda *a, **k: (reconcile.DONE, None),
     )
@@ -165,7 +168,7 @@ def test_sweeps_multiple_tables_in_one_run(monkeypatch):
     updates = _wire(
         monkeypatch,
         _make_get_where(
-            reg={"units": [{"id": 1}]},
+            reg={"units": [{"id": 1, "status": "registering"}]},
             dele={"sensors": [{"id": 2, "daijin_id": "7", "sensorCode": "AA"}]},
         ),
         find_id=lambda st, path, key: "900" if "vehicle" in path else None,
@@ -182,9 +185,45 @@ def test_sweeps_multiple_tables_in_one_run(monkeypatch):
 def test_resolved_tire_gets_business_status_new(monkeypatch):
     updates = _wire(
         monkeypatch,
-        _make_get_where(reg={"tires": [{"id": 8}]}),
+        _make_get_where(reg={"tires": [{"id": 8, "status": "registering"}]}),
         find_id=lambda *a: "321",
         attempt=lambda *a, **k: (reconcile.DONE, None),
     )
     reconcile.handler({}, None)
     assert updates[0][2]["status"] == "new"          # llanta: status de negocio, no 'active'
+
+
+# ---------- la selección es por daijin_id, no por status ----------
+
+def test_row_marked_active_without_platform_id_is_still_swept(monkeypatch):
+    """El caso que antes se escapaba.
+
+    Alguien marcaba 'active' desde el panel una fila sin daijin_id y el barrido, que
+    filtraba por status = 'registering', dejaba de verla para siempre. Ahora la
+    selección es por `daijin_id IS NULL`, así que el cron la recupera igual.
+    """
+    updates = _wire(
+        monkeypatch,
+        _make_get_where(reg={"sensors": [{"id": 5, "sensorCode": "AA", "status": "active"}]}),
+        find_id=lambda *a: "700",
+        attempt=lambda *a, **k: (reconcile.DONE, None),
+    )
+    out = reconcile.handler({}, None)
+    assert out["resolved"] == 1
+    assert updates[0][2]["daijin_id"] == "700"
+
+
+def test_business_status_is_not_overwritten_by_the_sweep(monkeypatch):
+    """Una llanta 'used' sin id recupera el id y CONSERVA su status de negocio.
+
+    El status solo se pisa cuando la fila seguía en 'registering'.
+    """
+    updates = _wire(
+        monkeypatch,
+        _make_get_where(reg={"tires": [{"id": 8, "status": "used"}]}),
+        find_id=lambda *a: "321",
+        attempt=lambda *a, **k: (reconcile.DONE, None),
+    )
+    reconcile.handler({}, None)
+    assert updates[0][2]["daijin_id"] == "321"
+    assert "status" not in updates[0][2]

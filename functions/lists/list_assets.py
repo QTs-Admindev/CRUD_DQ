@@ -1,10 +1,26 @@
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
-from shared.db.ops import get_many
+from shared.db.ops import count_rows, get_many
 from shared.utils.response import error, ok
 
 DEFAULT_LIMIT = 300
 MAX_LIMIT = 5000
+
+# Modo paginado (`?paged=1`): en vez del arreglo pelón devuelve {data, total, limit,
+# offset}, para que quien consume sepa si lo que recibió es TODO o solo la primera
+# página. Sin el parámetro la respuesta es idéntica a la de siempre (arreglo), así que
+# ningún consumidor actual se entera. Antes no había forma de distinguir "hay 300
+# filas" de "hay 3000 y te di las primeras 300": el corte era silencioso.
+TRUE_VALUES = {"1", "true", "True", "yes"}
+
+# Tope del desplazamiento. Muy por encima de cualquier inventario real; existe para que
+# un valor absurdo sea un 422 y no un error de MySQL convertido en 500.
+MAX_OFFSET = 1_000_000
+
+# Parámetros con significado propio: nunca se interpretan como filtro de columna. Van
+# explícitos y no por accidente de que ninguna columna se llame así hoy.
+RESERVED_PARAMS = {"company_id", "limit", "offset", "paged", "is_deleted",
+                   "created_at", "updated_at"}
 
 # Whitelist recurso -> columnas + comportamiento.
 #   prefixed: la tabla usa TABLE_PREFIX (activos); los catálogos son tablas REALES.
@@ -25,7 +41,7 @@ RESOURCES = {
         "prefixed": True, "soft": True, "by_company": True,
     },
     "sensors": {
-        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position",
+        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position, batch_code",
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tboxes": {
@@ -83,6 +99,18 @@ def handler(event, context):
         except ValueError:
             return error(422, "limit must be an integer")
 
+    offset = 0
+    if qs.get("offset"):
+        try:
+            offset = int(qs["offset"])
+        except ValueError:
+            return error(422, "offset must be an integer")
+        if offset < 0 or offset > MAX_OFFSET:
+            # Sin tope, un offset absurdo revienta en MySQL y sale como 500 opaco.
+            return error(422, f"offset must be between 0 and {MAX_OFFSET}")
+
+    paged = str(qs.get("paged") or "") in TRUE_VALUES
+
     # Extra optional filters (backward compatible): any output column can be matched
     # exactly via a query param, e.g. ?status=new&is_mounted=1&actor=foo@bar.com.
     # No such params => same behavior as before. company_id/limit keep their special
@@ -97,7 +125,14 @@ def handler(event, context):
     table = t(resource) if cfg["prefixed"] else resource
     db = get_db()
     try:
-        rows = get_many(db, table, cfg["columns"], filters, limit=limit)
+        rows = get_many(db, table, cfg["columns"], filters, limit=limit, offset=offset)
+        if paged:
+            return ok({
+                "data": rows,
+                "total": count_rows(db, table, filters),
+                "limit": limit,
+                "offset": offset,
+            })
         return ok(rows)
     except Exception as e:
         return error(500, f"DB error (list {resource}): {e}")

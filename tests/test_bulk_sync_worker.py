@@ -102,27 +102,49 @@ def test_skips_rows_already_active_or_deleted(wire):
     assert store.rows[1]["daijin_id"] == "99"  # untouched
 
 
-def test_recovers_registering_row_with_daijin_id_without_platform_call(wire):
-    # Limbo: la fila quedó 'registering' pero YA tiene daijin_id (el flip local a
-    # 'active' falló en su momento). Debe activarse SIN volver a llamar a la
-    # plataforma; antes el filtro la excluía y quedaba atascada para siempre.
-    class Boom:
-        def get(self, *a, **k):
-            raise AssertionError("no debe llamar a la plataforma para filas ya registradas")
+def test_una_fila_con_daijin_id_se_activa_SOLO_si_la_plataforma_lo_confirma(wire, monkeypatch):
+    """Limbo: la fila quedó 'registering' pero YA tiene daijin_id (el flip local a
+    'active' falló en su momento).
 
-        def post(self, *a, **k):
-            raise AssertionError("no debe llamar a la plataforma para filas ya registradas")
+    Antes se activaba sin preguntar, confiando en el campo local. Eso rompe el
+    invariante del PR #42: un activo se activa **solo con confirmación de la
+    plataforma**. El id guardado puede estar mal, o el activo puede haberse
+    borrado allá, y quedaría una fila 'active' apuntando a nada.
+    """
+    preguntado = []
+    monkeypatch.setattr(mod, "confirm_on_platform",
+                        lambda row, recurso, **kw: (preguntado.append(recurso), "555")[1])
 
     rows = _rows(1)
     rows[0]["daijin_id"] = "555"
-    store, reinvokes, ctx = wire(rows, Boom())
+    store, reinvokes, ctx = wire(rows, FakeSmartTyre())
 
     out = mod.handler({"ids": [1]}, ctx)
 
+    assert preguntado, "se activó sin confirmar contra la plataforma"
     assert out["resolved"] == 1
     assert store.rows[1]["status"] == "active"
     assert store.rows[1]["daijin_id"] == "555"
     assert reinvokes == []
+
+
+def test_si_la_plataforma_no_lo_reconoce_la_fila_NO_se_activa(wire, monkeypatch):
+    """El id guardado no corresponde a nada allá. Lo correcto es volver a
+    registrarlo por la llave natural, no dar por buena la fila."""
+    from shared.activation import NotOnPlatform
+
+    monkeypatch.setattr(mod, "confirm_on_platform",
+                        lambda row, recurso, **kw: (_ for _ in ()).throw(NotOnPlatform("no está")))
+
+    rows = _rows(1)
+    rows[0]["daijin_id"] = "id-basura"
+    store, reinvokes, ctx = wire(rows, FakeSmartTyre())
+
+    mod.handler({"ids": [1]}, ctx)
+
+    # Se registró de nuevo: el id que queda es el que devolvió la plataforma,
+    # no el basura que teníamos guardado.
+    assert store.rows[1]["daijin_id"] != "id-basura"
 
 
 def test_failed_rows_are_retried_as_next_pass(wire):

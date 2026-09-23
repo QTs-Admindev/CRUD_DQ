@@ -191,3 +191,39 @@ def test_same_folio_different_company_is_allowed(wire):
     resp = mod.handler(_event(prefix="BBB", folio="9001", company=200), None)
     assert resp["statusCode"] == 200
     assert str(_body(resp)["daijin_id"]) == "777"
+
+
+# --- convivencia de folios: el índice es (prefix, folio, company_id) ----------
+
+def test_la_llanta_propia_gana_sobre_la_de_otro_prefijo(wire):
+    """La base deja convivir dos llantas vivas con el mismo folio y compañía si el
+    prefijo difiere, y hay 32 grupos así en producción. El handler leía UNA fila
+    sin criterio: si se topaba con la del otro prefijo contestaba 409 contra una
+    llanta que no era la suya, y con cuál se topaba dependía del orden que
+    devolviera MySQL.
+    """
+    st = FakeSmartTyre(after=[{"id": 777}])
+    store, db = wire(st)
+    # La ajena va primero a propósito: es el orden que rompía el alta.
+    store.rows[1] = {"id": 1, "prefix": "AAA", "folio": "9001", "company_id": 100,
+                     "daijin_id": 1, "status": "new"}
+    store.rows[2] = {"id": 2, "prefix": "TSM", "folio": "9001", "company_id": 100,
+                     "status": "registering"}
+
+    resp = mod.handler(_event(prefix="TSM", folio="9001", company=100), None)
+
+    assert resp["statusCode"] != 409, "409 contra una llanta de otro prefijo"
+    assert _body(resp)["id"] == 2, "reanudó sobre la llanta equivocada"
+
+
+def test_un_prefijo_nuevo_sigue_chocando_con_el_folio_ocupado(wire):
+    """La regla del endpoint no cambia: el folio es único por compañía. Solo deja
+    de confundir 'es mi propia llanta' con 'es la de alguien más'."""
+    st = FakeSmartTyre()
+    store, db = wire(st)
+    store.rows[1] = {"id": 1, "prefix": "AAA", "folio": "9001", "company_id": 100,
+                     "daijin_id": 1, "status": "new"}
+
+    resp = mod.handler(_event(prefix="ZZZ", folio="9001", company=100), None)
+
+    assert resp["statusCode"] == 409

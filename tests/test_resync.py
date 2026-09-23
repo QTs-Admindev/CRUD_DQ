@@ -1,7 +1,7 @@
 """Tests del reintento de sincronización (POST /sensors/resync y /tboxes/resync).
 
 Mockea get_where/get_db y el cliente boto3 `lambda`. Verifica que:
-  - solo selecciona filas 'registering' (via el WHERE que arma),
+  - solo selecciona filas sin sincronizar (daijin_id IS NULL, via el WHERE que arma),
   - respeta el alcance por compañía (admin vs acotado) y los ids explícitos,
   - trocea en lotes y llama al worker una vez por lote con el payload correcto,
   - devuelve queued=0 (sin invocar) cuando no hay nada atascado.
@@ -30,7 +30,7 @@ def wire(monkeypatch):
     def setup(mod, rows):
         captured = {}
 
-        def fake_get_where(db, table, where_sql, params=(), limit=200):
+        def fake_get_where(db, table, where_sql, params=(), limit=200, order="ASC"):
             captured["table"] = table
             captured["where_sql"] = where_sql
             captured["params"] = list(params)
@@ -55,20 +55,23 @@ def _event(body=None, actor=None):
 
 
 def _rows(ids, company_id=100):
-    return [{"id": i, "status": "registering", "company_id": company_id} for i in ids]
+    return [{"id": i, "status": "registering", "daijin_id": None, "company_id": company_id}
+            for i in ids]
 
 
-# --- selección: solo 'registering' -----------------------------------------
+# --- selección: solo lo que no tiene id en la plataforma ---------------------
 
 @pytest.mark.parametrize("mod", [sensors_resync, tboxes_resync])
-def test_selects_only_registering_not_deleted(mod, wire):
+def test_selects_only_unsynced_not_deleted(mod, wire):
     captured, _ = wire(mod, _rows([1, 2, 3]))
 
     mod.handler(_event({}), None)
 
-    assert "status = %s" in captured["where_sql"]
+    assert "daijin_id IS NULL" in captured["where_sql"]
     assert "is_deleted IS NULL OR is_deleted = 0" in captured["where_sql"]
-    assert captured["params"][0] == "registering"
+    # El status NO participa en la selección: es editable y no prueba nada.
+    assert "status" not in captured["where_sql"]
+    assert captured["params"] == []
 
 
 # --- alcance por compañía ----------------------------------------------------
@@ -80,7 +83,7 @@ def test_scoped_company_filters_by_company(mod, wire):
     mod.handler(_event({"company_id": 100}), None)
 
     assert "company_id = %s" in captured["where_sql"]
-    assert captured["params"] == ["registering", 100]
+    assert captured["params"] == [100]
 
 
 @pytest.mark.parametrize("mod", [sensors_resync, tboxes_resync])
@@ -91,7 +94,7 @@ def test_admin_company_has_no_company_filter(mod, wire):
     mod.handler(_event({"company_id": 2}), None)
 
     assert "company_id = %s" not in captured["where_sql"]
-    assert captured["params"] == ["registering"]
+    assert captured["params"] == []
 
 
 @pytest.mark.parametrize("mod", [sensors_resync, tboxes_resync])
@@ -101,7 +104,7 @@ def test_omitted_company_is_global(mod, wire):
     mod.handler(_event({}), None)
 
     assert "company_id = %s" not in captured["where_sql"]
-    assert captured["params"] == ["registering"]
+    assert captured["params"] == []
 
 
 # --- ids explícitos ----------------------------------------------------------
@@ -113,7 +116,7 @@ def test_explicit_ids_added_to_where(mod, wire):
     mod.handler(_event({"ids": [5, 6]}), None)
 
     assert "id IN (%s, %s)" in captured["where_sql"]
-    assert captured["params"] == ["registering", 5, 6]
+    assert captured["params"] == [5, 6]
 
 
 @pytest.mark.parametrize("mod", [sensors_resync, tboxes_resync])
@@ -122,7 +125,7 @@ def test_scope_and_ids_combined(mod, wire):
 
     mod.handler(_event({"company_id": 100, "ids": [5]}), None)
 
-    assert captured["params"] == ["registering", 100, 5]
+    assert captured["params"] == [100, 5]
     assert "company_id = %s" in captured["where_sql"]
     assert "id IN (%s)" in captured["where_sql"]
 

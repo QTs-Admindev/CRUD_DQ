@@ -34,17 +34,38 @@ def get_by_field(db, table: str, field: str, value) -> dict | None:
 
 
 def get_many(db, table: str, columns: str = "*", filters: dict | None = None,
-             limit: int = 300) -> list[dict]:
-    """Lista filas (para poblar selects del tester). Orden id DESC para ver lo reciente."""
+             limit: int = 300, offset: int = 0) -> list[dict]:
+    """Lista filas (para poblar selects del tester). Orden id DESC para ver lo reciente.
+
+    `offset` pagina el listado. El orden es estable (id DESC), pero un alta ocurrida
+    ENTRE dos páginas recorre el corte y puede repetir una fila en la página siguiente;
+    por eso quien junta páginas debe deduplicar por id. Nunca se pierde una fila por un
+    alta, que es lo que importa para armar el inventario completo.
+    """
     sql = f"SELECT {columns} FROM {table}"
     vals: list = []
     if filters:
         sql += " WHERE " + " AND ".join(f"{k} = %s" for k in filters)
         vals = list(filters.values())
     sql += f" ORDER BY id DESC LIMIT {int(limit)}"
+    if offset:
+        sql += f" OFFSET {int(offset)}"
     with db.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(sql, vals)
         return list(cur.fetchall())
+
+
+def count_rows(db, table: str, filters: dict | None = None) -> int:
+    """Total de filas que cumplen los mismos filtros que `get_many` (sin limit)."""
+    sql = f"SELECT COUNT(*) AS n FROM {table}"
+    vals: list = []
+    if filters:
+        sql += " WHERE " + " AND ".join(f"{k} = %s" for k in filters)
+        vals = list(filters.values())
+    with db.cursor(pymysql.cursors.DictCursor) as cur:
+        cur.execute(sql, vals)
+        row = cur.fetchone()
+        return int((row or {}).get("n") or 0)
 
 
 def exists(db, table: str, filters: dict) -> bool:
@@ -64,13 +85,18 @@ def soft_delete(db, table: str, record_id: int) -> dict | None:
     return get_by_id(db, table, record_id)
 
 
-def get_where(db, table: str, where_sql: str, params=(), limit: int = 200) -> list[dict]:
+def get_where(db, table: str, where_sql: str, params=(), limit: int = 200,
+              order: str = "ASC") -> list[dict]:
     """Lista filas por una condición SQL libre (para la reconciliación).
 
     where_sql es una condición con placeholders %s (ej. "status = %s" o
-    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC (procesar lo más viejo).
+    "is_deleted = 1 AND daijin_id IS NOT NULL"). Orden id ASC por omisión (procesar lo
+    más viejo); `order="DESC"` para atender primero lo más reciente, que es lo que
+    necesita un barrido acotado cuando puede haber un rezago histórico que nunca
+    resuelve y que si no ocuparía el cupo entero en cada corrida.
     """
-    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id ASC LIMIT {int(limit)}"
+    direction = "DESC" if str(order).upper() == "DESC" else "ASC"
+    sql = f"SELECT * FROM {table} WHERE {where_sql} ORDER BY id {direction} LIMIT {int(limit)}"
     with db.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(sql, list(params))
         return list(cur.fetchall())

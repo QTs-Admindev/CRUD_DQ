@@ -1,3 +1,4 @@
+from shared.activation import liberar_llave_natural, llave_original
 from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, GPSHOOK_URL, t
 from shared.db.connection import get_db
@@ -142,10 +143,13 @@ def handler(event, context):
         # DONE (o sin daijin_id): soft-delete + limpiar daijin_id (marca cerrado).
         rec = update(db, t("units"), rid, {
             "is_deleted": 1, "daijin_id": None, "updated_at": now_ms(),
+            # Libera el folio/código: la fila se queda, pero su llave natural no
+            # puede seguir ocupando el índice UNIQUE. Ver liberar_llave_natural.
+            **liberar_llave_natural(rec, "units"),
         })
         db.commit()
         audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
-              natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
+              natural_key=llave_original(rec.get("unit_identifier")), company_id=rec.get("company_id"),
               daijin_id=daijin_id, result="success", changes={"is_deleted": 1})
         _purge_gpshook_footprint(rid)  # limpiar rastro en Mongo/OpenSearch/Redis
         return ok(rec)

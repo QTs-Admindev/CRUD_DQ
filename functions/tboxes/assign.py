@@ -26,7 +26,8 @@ def handler(event, context):
 
     db = get_db()
     rec = get_by_id(db, t("tboxes"), rid)
-    if not rec:
+    # Un Qbox borrado no se reasigna: la fila está cerrada.
+    if not rec or rec.get("is_deleted"):
         return error(404, "Tbox no encontrado")
     # Cannot reassign while bound to a unit; unbind first.
     if exists(db, t("units"), {"tbox_id": rid, "is_deleted": 0}):

@@ -22,6 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
+from shared.activation import (
+    NotOnPlatform, PlatformUnavailable, confirm_on_platform,
+)
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -68,11 +71,22 @@ def _reinvoke(ids: list[int], pass_num: int, actor: str) -> bool:
 
 def _sync_one(st, row):
     """Resolve one sensor against the platform. Returns (id, daijin_id | None, error)."""
-    # Recuperación: si la fila sigue 'registering' pero YA tiene daijin_id, es que
-    # se registró en la plataforma y solo falló el flip local a 'active'. No la
-    # volvemos a registrar; devolvemos su daijin_id para activarla localmente.
+    # Tener `daijin_id` guardado NO prueba que el activo exista en la plataforma: pudo
+    # borrarse allá, o el id pudo quedar mal escrito. Activar confiando en el campo
+    # local rompe el invariante del PR #42, que es "se activa solo con confirmación de
+    # la plataforma". Así que se confirma, y se usa el id que la plataforma diga, no el
+    # que teníamos guardado.
     if row.get("daijin_id"):
-        return row["id"], row["daijin_id"], None
+        try:
+            return row["id"], confirm_on_platform(row, "sensors", client=st), None
+        except NotOnPlatform:
+            # El id guardado no corresponde a nada: se descarta y se sigue por el camino
+            # normal, que busca por la llave natural y crea si no existe.
+            pass
+        except PlatformUnavailable as e:
+            # No se pudo leer la plataforma. Eso NO es prueba de que no exista, así que
+            # no se activa nada: queda pendiente para el siguiente intento.
+            return row["id"], None, str(e)
     try:
         daijin_id = resolve_or_create(
             st,
@@ -95,10 +109,17 @@ def handler(event, context):
 
     db = get_db()
 
-    # Only rows still worth syncing; anything already active/deleted drops out.
+    # Filas que todavía valen un intento. Son dos casos distintos y hay que aceptar los
+    # dos:
+    #   - sin `daijin_id`: falta sincronizar contra la plataforma.
+    #   - con `daijin_id` pero en 'registering': ya está en la plataforma y lo que falló
+    #     fue el cambio de estado local; se resuelve sin llamar a la plataforma.
+    # No se filtra SOLO por status: el status es editable y no prueba nada, así que una
+    # fila marcada a mano quedaría fuera del reintento y /sensors/resync la encolaría
+    # para que el worker la descartara en silencio.
     rows = [
         r for r in get_in(db, t("sensors"), "id", ids)
-        if r.get("status") == "registering"
+        if (not r.get("daijin_id") or r.get("status") == "registering")
         and not r.get("is_deleted")
     ]
     if not rows:

@@ -17,13 +17,18 @@ codes from an Excel file). This handler NEVER talks to the platform — it only:
 Everything is idempotent: re-posting the same file re-queues whatever is still
 `registering` and skips the rest, so a failed/partial import is retried by
 simply importing the same Excel again.
+
+Lote (`batch_code`): the identifier the uploader types for the shipment. New rows
+are born with it; re-queued rows get it only if they had none. A sensor that
+already has a lote keeps it: it belongs to the batch it arrived in.
 """
 import json
 import os
 
 import boto3
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from shared.activation import liberar_llave_natural
 from shared.audit import audit, actor_from
 from shared.config import t
 from shared.db.connection import get_db
@@ -34,11 +39,30 @@ from shared.utils.validators import HEX12
 
 MAX_CODES = 5000
 
+# Mismo largo que la columna sensors.batch_code (migrations/add_sensor_batch_code.sql).
+BATCH_CODE_MAX = 64
+
 
 class BulkCreateRequest(BaseModel):
     # company_id optional: None leaves the whole batch in inventory (unassigned).
     company_id: int | None = None
     sensor_codes: list[str] = Field(min_length=1, max_length=MAX_CODES)
+    # Optional for backward compatibility: callers that don't send it keep working.
+    batch_code: str | None = None
+
+    @field_validator("batch_code")
+    @classmethod
+    def _check_batch_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > BATCH_CODE_MAX:
+            raise ValueError(f"batch_code admite hasta {BATCH_CODE_MAX} caracteres")
+        if any(not ch.isprintable() for ch in v):
+            raise ValueError("batch_code no admite caracteres de control")
+        return v
 
 
 def _invoke_worker(ids: list[int], actor: str) -> bool:
@@ -91,6 +115,7 @@ def handler(event, context):
 
         already_active: list[str] = []
         requeue_ids: list[int] = []
+        requeue_without_batch: list[int] = []
         dead_to_free: list[dict] = []
         new_codes: list[str] = []
         for code in valid:
@@ -106,19 +131,27 @@ def handler(event, context):
                 already_active.append(code)
             else:
                 requeue_ids.append(row["id"])
+                if not row.get("batch_code"):
+                    requeue_without_batch.append(row["id"])
 
         for dead in dead_to_free:
             update(db, t("sensors"), dead["id"], {
-                "sensorCode": f"{dead['sensorCode']}__del{dead['id']}",
+                **liberar_llave_natural(dead, "sensors"),
                 "updated_at": now_ms(),
             })
+
+        # A re-queued row that never got a lote (a failed earlier import without
+        # one) takes this batch's. One that already has a lote keeps it.
+        if body.batch_code:
+            for rid in requeue_without_batch:
+                update(db, t("sensors"), rid, {"batch_code": body.batch_code, "updated_at": now_ms()})
 
         # 4. Insert the new ones as `registering` in one bulk statement
         ts = now_ms()
         insert_many(
             db, t("sensors"),
-            ["sensorCode", "company_id", "status", "updated_at"],
-            [(code, body.company_id, "registering", ts) for code in new_codes],
+            ["sensorCode", "company_id", "status", "batch_code", "updated_at"],
+            [(code, body.company_id, "registering", body.batch_code, ts) for code in new_codes],
         )
         db.commit()  # durable before launching the worker
 
@@ -143,6 +176,7 @@ def handler(event, context):
           natural_key=f"bulk:{len(valid)}", company_id=body.company_id,
           result="pending",
           payload={
+              "batch_code": body.batch_code,
               "received": len(body.sensor_codes),
               "inserted": len(inserted_ids),
               "requeued": len(requeue_ids),
@@ -161,6 +195,7 @@ def handler(event, context):
         "body": json.dumps({
             "status": "registering",
             "message": "Lote encolado (sincronización en proceso)",
+            "batch_code": body.batch_code,
             "summary": {
                 "received": len(body.sensor_codes),
                 "queued": len(queued_ids),

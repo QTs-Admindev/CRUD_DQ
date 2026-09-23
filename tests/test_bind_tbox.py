@@ -45,7 +45,8 @@ def _seed():
     store = FakeStore()
     store.rows[1] = {"id": 1, "daijin_id": "33369", "unit_catalog_id": 5,
                      "company_id": 100, "tbox_id": None}
-    store.rows[20] = {"id": 20, "daijin_id": "34351", "tboxCode": "10B41D30EA79"}
+    store.rows[20] = {"id": 20, "daijin_id": "34351", "tboxCode": "10B41D30EA79",
+                      "company_id": 100}
     store.rows[5] = {"id": 5, "name": "Tractocamión truck", "type": "motive", "d_id": 7}
     return store
 
@@ -73,3 +74,15 @@ def test_tbox_not_synced_409(monkeypatch):
     resp = mod.handler(_ev(1, 20), None)
     assert resp["statusCode"] == 409
     assert st.posts == []
+
+
+def test_tbox_other_company_409(monkeypatch):
+    # Tenant guard: a Qbox of a different company than the unit is rejected
+    # before touching the platform.
+    store, db, st = _seed(), FakeDB(), FakeSmartTyre()
+    store.rows[20]["company_id"] = 133  # unit is company 100
+    _wire(monkeypatch, store, db, st)
+    resp = mod.handler(_ev(1, 20), None)
+    assert resp["statusCode"] == 409
+    assert "compañías distintas" in json.loads(resp["body"])["error"]
+    assert st.posts == []  # never reached the platform

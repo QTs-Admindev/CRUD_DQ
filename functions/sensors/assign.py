@@ -26,7 +26,8 @@ def handler(event, context):
 
     db = get_db()
     rec = get_by_id(db, t("sensors"), rid)
-    if not rec:
+    # Un sensor borrado no se reasigna: la fila está cerrada.
+    if not rec or rec.get("is_deleted"):
         return error(404, "Sensor no encontrado")
     # Cannot reassign while bound to a tire; unbind first.
     if exists(db, t("tires"), {"sensor_id": rid, "is_deleted": 0}):

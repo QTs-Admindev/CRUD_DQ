@@ -358,6 +358,10 @@ def test_pkg_tire_delete_orphan_deletes_sensor_then_tyre(monkeypatch):
     assert ("sensor", "282720") in remote.calls
     # el sensor local sobrevive, sin daijin_id (vuelve a sincronizar al reutilizarse)
     assert store.rows[42]["daijin_id"] is None
+    # y vuelve a 'registering': sin id en la plataforma ese es su estado real, y así el
+    # barrido de reconciliación (que selecciona por daijin_id IS NULL) sabe que debe
+    # re-crearlo en vez de encontrarse una fila 'active' sin id.
+    assert store.rows[42]["status"] == "registering"
     # la llanta se cerró en local recién tras el borrado remoto confirmado
     assert store.rows[5]["is_deleted"] == 1
 

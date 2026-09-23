@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+from shared.activation import MARCA_BORRADO, llave_original
+
 from functions.sensors import bulk_create as mod
 
 
@@ -141,8 +143,11 @@ def test_frees_soft_deleted_code_and_reinserts(wire):
 
     body = _body(resp)
     assert body["summary"]["inserted"] == 1
-    # dead row keeps history under a renamed code
-    assert store.rows[3]["sensorCode"] == "DDDDDDDDDDD4__del3"
+    # la fila muerta conserva su historia, pero con el código ya marcado: una sola
+    # marca para todo el repo (la misma que pone el borrado), así `llave_original`
+    # recupera el valor en cualquier caso.
+    assert store.rows[3]["sensorCode"] == "DDDDDDDDDDD4" + MARCA_BORRADO + "3"
+    assert llave_original(store.rows[3]["sensorCode"]) == "DDDDDDDDDDD4"
     # fresh live row owns the original code
     assert store.inserted[0]["sensorCode"] == "DDDDDDDDDDD4"
 
@@ -160,3 +165,73 @@ def test_worker_launch_failure_is_not_fatal(wire):
 
     assert resp["statusCode"] == 202  # rows are safe locally; re-import retries
     assert _body(resp)["worker_started"] is False
+
+
+# ─── Lote (batch_code) ────────────────────────────────────────────────────────
+
+def _event_lote(codes, batch_code, company=100):
+    return {
+        "body": json.dumps({"sensor_codes": codes, "company_id": company, "batch_code": batch_code}),
+        "headers": {"X-Actor": "cesar@quinta.tech"},
+    }
+
+
+def test_new_sensors_are_born_with_the_batch_code(wire):
+    store, db, invocations = wire()
+
+    resp = mod.handler(_event_lote(["A4C13873C3E6", "A4C13873C3E7"], "  LOTE-2026-09-A  "), None)
+
+    assert resp["statusCode"] == 202
+    assert _body(resp)["batch_code"] == "LOTE-2026-09-A"  # recortado
+    assert {r["batch_code"] for r in store.inserted} == {"LOTE-2026-09-A"}
+
+
+def test_requeued_row_without_batch_takes_it_and_one_with_batch_keeps_it(wire):
+    store, db, invocations = wire(rows=[
+        {"id": 7, "sensorCode": "CCCCCCCCCCC3", "daijin_id": None,
+         "status": "registering", "is_deleted": 0, "batch_code": None},
+        {"id": 8, "sensorCode": "CCCCCCCCCCC4", "daijin_id": None,
+         "status": "registering", "is_deleted": 0, "batch_code": "LOTE-VIEJO"},
+    ])
+
+    mod.handler(_event_lote(["CCCCCCCCCCC3", "CCCCCCCCCCC4"], "LOTE-NUEVO"), None)
+
+    assert store.rows[7]["batch_code"] == "LOTE-NUEVO"
+    assert store.rows[8]["batch_code"] == "LOTE-VIEJO"
+
+
+def test_already_active_sensor_keeps_its_batch(wire):
+    store, db, invocations = wire(rows=[
+        {"id": 1, "sensorCode": "AAAAAAAAAAA1", "daijin_id": 99,
+         "status": "active", "is_deleted": 0, "batch_code": None},
+    ])
+
+    mod.handler(_event_lote(["AAAAAAAAAAA1"], "LOTE-NUEVO"), None)
+
+    assert store.rows[1]["batch_code"] is None  # llegó antes; no se le inventa lote
+
+
+def test_without_batch_code_everything_works_as_before(wire):
+    store, db, invocations = wire()
+
+    resp = mod.handler(_event(["EEEEEEEEEEE5"]), None)
+
+    assert resp["statusCode"] == 202
+    assert _body(resp)["batch_code"] is None
+    assert store.inserted[0]["batch_code"] is None
+
+
+def test_blank_batch_code_counts_as_none(wire):
+    store, db, invocations = wire()
+
+    mod.handler(_event_lote(["EEEEEEEEEEE6"], "   "), None)
+
+    assert store.inserted[0]["batch_code"] is None
+
+
+def test_batch_code_too_long_or_with_control_chars_is_422(wire):
+    wire()
+    assert mod.handler(_event_lote(["EEEEEEEEEEE7"], "X" * 65), None)["statusCode"] == 422
+    assert mod.handler(_event_lote(["EEEEEEEEEEE7"], "LOTE\n1"), None)["statusCode"] == 422
+    # 64 exactos sí caben
+    assert mod.handler(_event_lote(["EEEEEEEEEEE7"], "X" * 64), None)["statusCode"] == 202

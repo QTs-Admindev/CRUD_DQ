@@ -192,7 +192,7 @@ def test_concurrent_duplicate_insert_resumes(wire, monkeypatch):
         state["raced"] = True  # alguien más lo insertó en paralelo
         raise Exception("Duplicate entry 'A4C13873C3E6' for key 'sensorCode'")
 
-    def gw(_db, _table, _sql, params, _limit=200):
+    def gw(_db, _table, _sql, params, _limit=200, order="ASC"):
         # antes de la carrera el código no existe; después, la fila 77 está viva
         return [dict(store.rows[77])] if state["raced"] else []
 

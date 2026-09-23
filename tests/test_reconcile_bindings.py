@@ -40,7 +40,7 @@ def _wire(monkeypatch, *, unit=None, tire=None, store=None, tbox_bound_seq=None,
     monkeypatch.setattr(reconcile, "get_db", lambda: FakeDB())
     monkeypatch.setattr(reconcile, "SmartTyreClient", lambda: st)
     monkeypatch.setattr(reconcile, "get_where",
-                        lambda db, table, where, params=(), limit=100: _rows_for(where, unit, tire))
+                        lambda db, table, where, params=(), limit=100, order="ASC": _rows_for(where, unit, tire))
     monkeypatch.setattr(reconcile, "get_by_id",
                         lambda db, table, rid: dict(store[table][rid]) if store and rid in store.get(table, {}) else None)
     monkeypatch.setattr(reconcile, "update",
