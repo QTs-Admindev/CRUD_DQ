@@ -506,3 +506,64 @@ def test_el_409_dice_CUAL_llanta_tiene_el_folio(monkeypatch):
     cuerpo = json.dumps(resp)
     assert "4711" in cuerpo, "no dice el id de la llanta que lo tiene"
     assert "CEC" in cuerpo, "no dice el prefijo de la llanta que lo tiene"
+
+
+# ------------------------------------------------------- lote (batch_code) al editar
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_editar_pone_y_cambia_el_lote(monkeypatch, mod, resource, row):
+    store = FakeStore({1: dict(row, daijin_id="55", status="active", batch_code=None)})
+    _wire(monkeypatch, mod, store)
+    auditado = []
+    monkeypatch.setattr(mod, "audit", lambda *a, **k: auditado.append(k))
+
+    assert mod.handler(_ev(1, {"batch_code": "  LOTE-A "}), None)["statusCode"] == 200
+    assert store.rows[1]["batch_code"] == "LOTE-A"
+    assert mod.handler(_ev(1, {"batch_code": "LOTE-B"}), None)["statusCode"] == 200
+    assert store.rows[1]["batch_code"] == "LOTE-B"
+
+    # Cada cambio deja rastro con el valor de antes y el de después.
+    assert [(a["payload"]["batch_code_antes"], a["changes"]["batch_code"]) for a in auditado] == [
+        (None, "LOTE-A"), ("LOTE-A", "LOTE-B")]
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_editar_con_lote_vacio_lo_quita(monkeypatch, mod, resource, row):
+    store = FakeStore({1: dict(row, daijin_id="55", status="active", batch_code="LOTE-A")})
+    _wire(monkeypatch, mod, store)
+    monkeypatch.setattr(mod, "audit", lambda *a, **k: None)
+
+    assert mod.handler(_ev(1, {"batch_code": "   "}), None)["statusCode"] == 200
+    assert store.rows[1]["batch_code"] is None
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_editar_sin_mandar_lote_no_lo_toca(monkeypatch, mod, resource, row):
+    store = FakeStore({1: dict(row, daijin_id="55", status="active", batch_code="LOTE-A")})
+    _wire(monkeypatch, mod, store)
+    auditado = []
+    monkeypatch.setattr(mod, "audit", lambda *a, **k: auditado.append(k))
+
+    assert mod.handler(_ev(1, {"status": "active"}), None)["statusCode"] == 200
+    assert store.rows[1]["batch_code"] == "LOTE-A"
+    assert all("batch_code" not in (a.get("changes") or {}) for a in auditado)
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_editar_con_el_mismo_lote_no_audita(monkeypatch, mod, resource, row):
+    store = FakeStore({1: dict(row, daijin_id="55", status="active", batch_code="LOTE-A")})
+    _wire(monkeypatch, mod, store)
+    auditado = []
+    monkeypatch.setattr(mod, "audit", lambda *a, **k: auditado.append(k))
+
+    assert mod.handler(_ev(1, {"batch_code": "LOTE-A"}), None)["statusCode"] == 200
+    assert auditado == []
+
+
+@pytest.mark.parametrize("mod, resource, row", DEVICE_CASES)
+def test_editar_con_lote_invalido_es_422_y_no_escribe(monkeypatch, mod, resource, row):
+    store = FakeStore({1: dict(row, daijin_id="55", status="active", batch_code=None)})
+    _wire(monkeypatch, mod, store)
+
+    assert mod.handler(_ev(1, {"batch_code": "X" * 65}), None)["statusCode"] == 422
+    assert store.updates == []

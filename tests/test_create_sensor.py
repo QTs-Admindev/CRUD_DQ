@@ -205,3 +205,50 @@ def test_concurrent_duplicate_insert_resumes(wire, monkeypatch):
     assert resp["statusCode"] == 200
     assert str(_body(resp)["daijin_id"]) == "555"
     assert store.rows[77]["status"] == "active"
+
+
+# ─── Lote (batch_code) en el alta de uno por uno ──────────────────────────────
+
+def _event_lote(batch, code="A4C13873C3E6", company=100):
+    return {"body": json.dumps({"sensor_code": code, "company_id": company, "batch_code": batch})}
+
+
+def test_new_sensor_is_born_with_the_batch(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 275771}])
+    store, db = wire(st)
+
+    resp = mod.handler(_event_lote("  LOTE-9  "), None)
+
+    assert resp["statusCode"] == 200
+    assert _body(resp)["batch_code"] == "LOTE-9"
+
+
+def test_without_batch_the_sensor_has_none(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 1}])
+    store, db = wire(st)
+
+    mod.handler(_event(), None)
+
+    assert store.rows[1]["batch_code"] is None
+
+
+def test_resumed_row_without_batch_takes_it_and_one_with_batch_keeps_it(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 5}])
+    store, db = wire(st)
+    store.rows[1] = {"id": 1, "sensorCode": "A4C13873C3E6", "company_id": 100,
+                     "status": "registering", "daijin_id": None, "batch_code": None}
+    store.rows[2] = {"id": 2, "sensorCode": "A4C13873C3E7", "company_id": 100,
+                     "status": "registering", "daijin_id": None, "batch_code": "LOTE-VIEJO"}
+    store.seq = 2
+
+    mod.handler(_event_lote("LOTE-NUEVO"), None)
+    mod.handler(_event_lote("LOTE-NUEVO", code="A4C13873C3E7"), None)
+
+    assert store.rows[1]["batch_code"] == "LOTE-NUEVO"
+    assert store.rows[2]["batch_code"] == "LOTE-VIEJO"
+
+
+def test_invalid_batch_returns_422(wire):
+    wire(FakeSmartTyre())
+    assert mod.handler(_event_lote("X" * 65), None)["statusCode"] == 422
+    assert mod.handler(_event_lote("LOTE\t1"), None)["statusCode"] == 422
