@@ -136,3 +136,24 @@ def test_invalid_tbox_code_returns_422(wire):
     wire(FakeSmartTyre())
     resp = mod.handler(_event(code="ZZZ"), None)
     assert resp["statusCode"] == 422
+
+
+# ─── Lote (batch_code) en el alta de uno por uno ──────────────────────────────
+
+def _event_lote(batch, code="10B41D30EA79", company=100):
+    return {"body": json.dumps({"tbox_code": code, "company_id": company, "batch_code": batch})}
+
+
+def test_new_tbox_is_born_with_the_batch(wire):
+    st = FakeSmartTyre(existing=[], after=[{"id": 34351}])
+    store, db = wire(st)
+
+    resp = mod.handler(_event_lote("LOTE-Q1"), None)
+
+    assert resp["statusCode"] == 200
+    assert _body(resp)["batch_code"] == "LOTE-Q1"
+
+
+def test_invalid_tbox_batch_returns_422(wire):
+    wire(FakeSmartTyre())
+    assert mod.handler(_event_lote("X" * 65), None)["statusCode"] == 422

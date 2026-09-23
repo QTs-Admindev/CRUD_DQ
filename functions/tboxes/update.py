@@ -1,7 +1,7 @@
 import json
 import logging
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from shared.activation import NotOnPlatform, PlatformUnavailable, confirm_on_platform
 from shared.audit import audit
@@ -10,6 +10,7 @@ from shared.db.connection import get_db
 from shared.db.ops import get_by_id, update
 from shared.utils.clock import now_ms
 from shared.utils.response import SYNC_ERROR, error, ok
+from shared.utils.validators import normalize_batch_code
 
 _log = logging.getLogger(__name__)
 
@@ -23,6 +24,15 @@ NOT_ON_PLATFORM_MSG = (
 class UpdateTboxRequest(BaseModel):
     status: str | None = None
     company_id: int | None = None
+    # Lote: con valor lo pone o lo cambia; vacío ("") lo quita; ausente no lo toca.
+    batch_code: str | None = None
+
+    @field_validator("batch_code")
+    @classmethod
+    def _check_batch_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return normalize_batch_code(v) or ""
 
 
 def handler(event, context):
@@ -49,6 +59,12 @@ def handler(event, context):
     mysql_payload = {k: v for k, v in body.model_dump().items() if v is not None}
     if not mysql_payload:
         return ok(tbox)
+
+    # "" es la forma de pedir "sin lote"; en la base es NULL.
+    if mysql_payload.get("batch_code") == "":
+        mysql_payload["batch_code"] = None
+    lote_antes = tbox.get("batch_code")
+    lote_cambia = "batch_code" in mysql_payload and mysql_payload["batch_code"] != lote_antes
 
     # company_id: la compañía destino tiene que EXISTIR antes de escribir nada. Un
     # entero cualquiera deja el activo colgado de una compañía fantasma: desaparece
@@ -98,6 +114,17 @@ def handler(event, context):
     except Exception as e:
         db.rollback()
         return error(500, f"DB error: {e}")
+
+    if lote_cambia:
+        # Best-effort, igual que la de abajo: la bitácora no tumba el cambio.
+        try:
+            audit(db, event, context, action="update", asset_type="tbox",
+                  asset_id=tbox_id, natural_key=tbox.get("tboxCode"),
+                  company_id=record.get("company_id"), daijin_id=record.get("daijin_id"),
+                  result="success", payload={"batch_code_antes": lote_antes},
+                  changes={"batch_code": mysql_payload["batch_code"]})
+        except Exception:
+            pass
 
     if healed_id:
         # Best-effort: el cambio ya está confirmado, un fallo de bitácora no lo tumba.

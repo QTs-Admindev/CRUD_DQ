@@ -35,12 +35,9 @@ from shared.db.connection import get_db
 from shared.db.ops import get_in, insert_many, update
 from shared.utils.clock import now_ms
 from shared.utils.response import error
-from shared.utils.validators import HEX12
+from shared.utils.validators import HEX12, normalize_batch_code
 
 MAX_CODES = 5000
-
-# Mismo largo que la columna sensors.batch_code (migrations/add_sensor_batch_code.sql).
-BATCH_CODE_MAX = 64
 
 
 class BulkCreateRequest(BaseModel):
@@ -53,16 +50,7 @@ class BulkCreateRequest(BaseModel):
     @field_validator("batch_code")
     @classmethod
     def _check_batch_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip()
-        if not v:
-            return None
-        if len(v) > BATCH_CODE_MAX:
-            raise ValueError(f"batch_code admite hasta {BATCH_CODE_MAX} caracteres")
-        if any(not ch.isprintable() for ch in v):
-            raise ValueError("batch_code no admite caracteres de control")
-        return v
+        return normalize_batch_code(v)
 
 
 def _invoke_worker(ids: list[int], actor: str) -> bool:

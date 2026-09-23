@@ -45,7 +45,7 @@ RESOURCES = {
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tboxes": {
-        "columns": "id, tboxCode, version, company_id, daijin_id, status, package_id",
+        "columns": "id, tboxCode, version, company_id, daijin_id, status, package_id, batch_code",
         "prefixed": True, "soft": True, "by_company": True,
     },
     # Catálogos / referencia (tablas reales, solo lectura, sin soft-delete).

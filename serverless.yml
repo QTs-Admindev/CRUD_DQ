@@ -58,7 +58,7 @@ functions:
       - http:
           path: /vehicles
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   updateVehicle:
     handler: functions/vehicles/update.handler
@@ -66,7 +66,7 @@ functions:
       - http:
           path: /vehicles/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   getVehicle:
     handler: functions/vehicles/get.handler
@@ -74,7 +74,7 @@ functions:
       - http:
           path: /vehicles/{id}
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   createTire:
     handler: functions/tires/create.handler
@@ -82,7 +82,7 @@ functions:
       - http:
           path: /tires
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   updateTire:
     handler: functions/tires/update.handler
@@ -90,7 +90,7 @@ functions:
       - http:
           path: /tires/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   createSensor:
     handler: functions/sensors/create.handler
@@ -98,7 +98,7 @@ functions:
       - http:
           path: /sensors
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   createTbox:
     handler: functions/tboxes/create.handler
@@ -106,7 +106,7 @@ functions:
       - http:
           path: /tboxes
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   listAssets:
     handler: functions/lists/list_assets.handler
@@ -114,7 +114,7 @@ functions:
       - http:
           path: /list/{resource}
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   # Destinatarios de alertas por compañía (números de WhatsApp + correos y sus
   # switches). GPSHook los lee al mandar la alerta; aquí se administran desde el FE.
@@ -124,7 +124,7 @@ functions:
       - http:
           path: /companies/{id}
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   updateCompanyAlerts:
     handler: functions/companies/update.handler
@@ -132,7 +132,7 @@ functions:
       - http:
           path: /companies/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   getStatus:
     handler: functions/status/get_status.handler
@@ -140,7 +140,7 @@ functions:
       - http:
           path: /status/{resource}/{id}
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   bindTbox:
     handler: functions/vehicles/bind_tbox.handler
@@ -148,7 +148,7 @@ functions:
       - http:
           path: /vehicles/{id}/tbox/bind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   unbindTbox:
     handler: functions/vehicles/unbind_tbox.handler
@@ -156,7 +156,7 @@ functions:
       - http:
           path: /vehicles/{id}/tbox/unbind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   deleteVehicle:
     handler: functions/vehicles/delete.handler
@@ -164,7 +164,7 @@ functions:
       - http:
           path: /vehicles/{id}
           method: delete
-          cors: true
+          cors: ${self:custom.cors}
 
   deleteTire:
     handler: functions/tires/delete.handler
@@ -172,7 +172,7 @@ functions:
       - http:
           path: /tires/{id}
           method: delete
-          cors: true
+          cors: ${self:custom.cors}
 
   deleteSensor:
     handler: functions/sensors/delete.handler
@@ -180,7 +180,7 @@ functions:
       - http:
           path: /sensors/{id}
           method: delete
-          cors: true
+          cors: ${self:custom.cors}
 
   deleteTbox:
     handler: functions/tboxes/delete.handler
@@ -188,7 +188,7 @@ functions:
       - http:
           path: /tboxes/{id}
           method: delete
-          cors: true
+          cors: ${self:custom.cors}
 
   assignSensor:
     handler: functions/sensors/assign.handler
@@ -196,7 +196,7 @@ functions:
       - http:
           path: /sensors/{id}/assign
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   assignTbox:
     handler: functions/tboxes/assign.handler
@@ -204,7 +204,7 @@ functions:
       - http:
           path: /tboxes/{id}/assign
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   updateTbox:
     handler: functions/tboxes/update.handler
@@ -212,7 +212,7 @@ functions:
       - http:
           path: /tboxes/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   updateSensor:
     handler: functions/sensors/update.handler
@@ -220,7 +220,7 @@ functions:
       - http:
           path: /sensors/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   bindTireToVehicle:
     handler: functions/bindings/bind_tire.handler
@@ -228,7 +228,7 @@ functions:
       - http:
           path: /vehicles/{id}/tires/bind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   unbindTireFromVehicle:
     handler: functions/bindings/unbind_tire.handler
@@ -236,7 +236,7 @@ functions:
       - http:
           path: /vehicles/{id}/tires/unbind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   bindSensorToTire:
     handler: functions/bindings/bind_sensor.handler
@@ -244,7 +244,7 @@ functions:
       - http:
           path: /tires/{id}/sensors/bind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   unbindSensorFromTire:
     handler: functions/bindings/unbind_sensor.handler
@@ -252,7 +252,7 @@ functions:
       - http:
           path: /tires/{id}/sensors/unbind
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Importación masiva de sensores (Excel en el FE). Inserta el lote local como
   # 'registering' y delega TODO el tráfico a la plataforma al worker asíncrono.
@@ -264,7 +264,7 @@ functions:
       - http:
           path: /sensors/bulk
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Reintento de sincronización de sensores atascados en 'registering': re-dispara
   # el worker para esas filas (mismo worker que el bulk). No toca la plataforma.
@@ -276,7 +276,7 @@ functions:
       - http:
           path: /sensors/resync
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Worker del bulk: sin API Gateway (sin tope de 29 s). Se auto-encadena si se
   # queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
@@ -298,7 +298,7 @@ functions:
       - http:
           path: /tboxes/bulk
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Estado del lote (solo lectura) para la barra de progreso del FE: cuántos ya
   # sincronizaron vs cuántos siguen 'registering'.
@@ -308,7 +308,7 @@ functions:
       - http:
           path: /tboxes/bulk/status
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Reintento de sincronización de Qboxes atascados en 'registering': re-dispara
   # el worker para esas filas (mismo worker que el bulk). No toca la plataforma.
@@ -320,7 +320,7 @@ functions:
       - http:
           path: /tboxes/resync
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Worker del bulk de Qboxes: sin API Gateway (sin tope de 29 s). Se auto-encadena
   # si se queda sin tiempo y reintenta a los fallidos hasta MAX_PASSES. Solo toca los
@@ -339,7 +339,7 @@ functions:
       - http:
           path: /packages
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   listPackages:
     handler: functions/packages/list.handler
@@ -347,7 +347,7 @@ functions:
       - http:
           path: /packages
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   getPackage:
     handler: functions/packages/get.handler
@@ -355,7 +355,7 @@ functions:
       - http:
           path: /packages/{id}
           method: get
-          cors: true
+          cors: ${self:custom.cors}
 
   updatePackage:
     handler: functions/packages/edit.handler
@@ -363,7 +363,7 @@ functions:
       - http:
           path: /packages/{id}
           method: put
-          cors: true
+          cors: ${self:custom.cors}
 
   deletePackage:
     handler: functions/packages/delete.handler
@@ -371,7 +371,7 @@ functions:
       - http:
           path: /packages/{id}
           method: delete
-          cors: true
+          cors: ${self:custom.cors}
 
   movePackage:
     handler: functions/packages/move.handler
@@ -379,7 +379,7 @@ functions:
       - http:
           path: /packages/{id}/move
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # assign crea llantas genéricas cuando la posición está vacía: necesita el
   # catálogo de llanta genérica que usa el alta de esas llantas.
@@ -391,7 +391,7 @@ functions:
       - http:
           path: /packages/{id}/assign
           method: post
-          cors: true
+          cors: ${self:custom.cors}
 
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en la plataforma.
   reconcile:
@@ -409,6 +409,21 @@ plugins:
   - serverless-python-requirements
 
 custom:
+  # CORS de todas las rutas. Es el default de `cors: true` más X-Actor, la cabecera
+  # con el correo de quien opera que alimenta asset_audit_log (shared/audit.py).
+  # Sin ella en la lista, el navegador bloquea cualquier petición que la mande.
+  cors:
+    origin: '*'
+    headers:
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+      - X-Amzn-Trace-Id
+      - X-Actor
+    allowCredentials: false
   pythonRequirements:
     dockerizePip: false
     slim: true
