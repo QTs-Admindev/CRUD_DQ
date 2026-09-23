@@ -41,7 +41,7 @@ RESOURCES = {
         "prefixed": True, "soft": True, "by_company": True,
     },
     "sensors": {
-        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position",
+        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position, batch_code",
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tboxes": {

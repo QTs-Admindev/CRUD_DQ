@@ -1,4 +1,5 @@
 import json
+import sys
 
 from functions.sensors import delete as sdel
 from functions.tboxes import delete as bdel
@@ -496,3 +497,86 @@ def test_pending_delete_body_contract(monkeypatch):
     assert body["status"] == "deleting"
     assert body["reason"] == "timeout x3"
     assert body["data"]["is_deleted"] == 1
+
+
+# ---------- purga del rastro en GPSHook (Mongo/OpenSearch/Redis) ----------
+# Mongo/OpenSearch/Redis los dueña GPSHook, no CRUD_DQ. Al borrar una unidad, tras el
+# soft-delete exitoso, delete.py avisa (fire-and-forget) a GPSHook /unit/{id}/purge para
+# que borre el rastro y deje de generar alertas/datos viejos.
+
+class FakeHttpx:
+    """Stub de httpx: registra los POST (delete.py hace `import httpx` perezoso)."""
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.posts = []
+
+    def post(self, url, timeout=None):
+        if self.fail:
+            raise ConnectionError("GPSHook down")
+        self.posts.append((url, timeout))
+        return None
+
+
+def _fake_httpx(monkeypatch, fail=False):
+    fx = FakeHttpx(fail=fail)
+    monkeypatch.setitem(sys.modules, "httpx", fx)
+    return fx
+
+
+# --- happy path: tras borrar la unidad, dispara la purga en GPSHook con su id ---
+def test_vehicle_delete_triggers_gpshook_purge(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
+    remote = FakeRemote((DONE, None))
+    _wire(monkeypatch, vdel, store, remote)
+    fx = _fake_httpx(monkeypatch)
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 200
+    assert store.rows[1]["is_deleted"] == 1
+    assert len(fx.posts) == 1
+    assert fx.posts[0][0].endswith("/unit/1/purge")
+
+
+# --- transitorio (202): el borrado local queda hecho -> también purga en GPSHook ---
+def test_vehicle_delete_transient_also_purges(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
+    remote = FakeRemote((TRANSIENT, "timeout"))
+    _wire(monkeypatch, vdel, store, remote)
+    fx = _fake_httpx(monkeypatch)
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 202
+    assert store.rows[1]["is_deleted"] == 1
+    assert len(fx.posts) == 1 and fx.posts[0][0].endswith("/unit/1/purge")
+
+
+# --- best-effort: si GPSHook no responde, el borrado local NO se rompe (sigue 200) ---
+def test_gpshook_purge_failure_does_not_break_delete(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
+    remote = FakeRemote((DONE, None))
+    _wire(monkeypatch, vdel, store, remote)
+    _fake_httpx(monkeypatch, fail=True)          # GPSHook caído
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 200             # el delete se mantiene
+    assert store.rows[1]["is_deleted"] == 1
+
+
+# --- GUARD (409): NO se borró en local -> NO se debe purgar el rastro ---
+def test_vehicle_delete_guard_does_not_purge(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
+    remote = FakeRemote((GUARD, "vinculado"))
+    _wire(monkeypatch, vdel, store, remote)
+    fx = _fake_httpx(monkeypatch)
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 409
+    assert store.rows[1]["is_deleted"] == 0
+    assert fx.posts == []                        # sin borrado -> sin purga
+
+
+# --- unidad ya borrada (idempotente): no re-purga ---
+def test_already_deleted_does_not_purge(monkeypatch):
+    store = FakeStore({1: {"id": 1, "is_deleted": 1}})
+    remote = FakeRemote((DONE, None))
+    _wire(monkeypatch, vdel, store, remote)
+    fx = _fake_httpx(monkeypatch)
+    resp = vdel.handler(_ev(1), None)
+    assert resp["statusCode"] == 200
+    assert fx.posts == []
