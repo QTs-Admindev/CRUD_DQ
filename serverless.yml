@@ -405,6 +405,17 @@ functions:
           # sana fantasmas). Sin esto, los 'pending' de bind nunca se reconcilian.
           enabled: true
 
+  # Vigía de sincronización: deja en asset_audit_log qué sensores y Qbox no sincronizan
+  # y por qué (actor 'sync-watcher'). Solo observa: no toca sensors/tboxes ni da de alta
+  # nada en la plataforma, y escribe únicamente cuando el estado de un activo cambia.
+  syncWatcher:
+    handler: functions/reconciliation/sync_watcher.handler
+    timeout: 120
+    events:
+      - schedule:
+          rate: rate(15 minutes)
+          enabled: true
+
 plugins:
   - serverless-python-requirements
 
