@@ -117,6 +117,7 @@ def handler(event, context):
                 {"body": json.dumps({
                     "prefix": "PKG",
                     "folio": f"PKG{pid}-{pos}",
+                    "origin": "unconfirmed",
                     "company_id": company_id,
                     "tires_catalog_id": int(generic_catalog),
                 }), "headers": headers}, context)

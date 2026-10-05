@@ -67,12 +67,12 @@ def _formulario(**cambios):
 
 
 def test_guarda_catalogo_condicion_costo_profundidad_y_kilometraje(store):
-    resp = _put(_formulario(tires_catalog_id=9, status="renewed", life_number=3,
+    resp = _put(_formulario(tires_catalog_id=9, status="used", life_number=1,
                             cost=5400.5, current_depth=12.25, tire_mileage=85000))
     assert resp["statusCode"] == 200
     guardado = store.updates[-1]
     assert guardado["tires_catalog_id"] == 9
-    assert guardado["status"] == "renewed" and guardado["life_number"] == 3
+    assert guardado["status"] == "used"
     assert guardado["cost"] == 5400.5
     assert guardado["current_depth"] == 12.25
     assert guardado["tire_mileage"] == 85000
@@ -129,8 +129,9 @@ def test_catalogo_sin_profundidad_de_fabrica_no_bloquea(store):
     assert _put(_formulario(tires_catalog_id=12, current_depth=25))["statusCode"] == 200
 
 
+# Editar solo corrige nueva <-> gallito. Renovada y la vida van por Renovar.
 @pytest.mark.parametrize("status,vida,esperado", [
-    ("renewed", 2, 200), ("renewed", 5, 200), ("renewed", 1, 422), ("renewed", 6, 422),
+    ("renewed", 2, 422), ("renewed", 5, 422), ("renewed", 1, 422), ("renewed", 6, 422),
     ("used", 1, 200), ("used", 2, 422), ("discarded", 1, 422),
 ])
 def test_condicion(store, status, vida, esperado):
@@ -142,3 +143,23 @@ def test_sin_cambios_no_escribe(store):
     resp = _put({"current_depth": 10.0})
     assert resp["statusCode"] == 200
     assert store.updates == []
+
+
+def test_una_renovada_no_vuelve_a_nueva(store):
+    store.tire.update({"status": "renewed", "life_number": 3})
+    resp = _put(_formulario(status="new", life_number=3))
+    assert resp["statusCode"] == 422
+    assert store.updates == []
+
+
+def test_una_renovada_no_cambia_de_vida_editando(store):
+    store.tire.update({"status": "renewed", "life_number": 3})
+    resp = _put(_formulario(status="renewed", life_number=4))
+    assert resp["statusCode"] == 422
+
+
+def test_una_renovada_se_edita_si_no_toca_la_vida(store):
+    store.tire.update({"status": "renewed", "life_number": 3})
+    resp = _put(_formulario(status="renewed", life_number=3, folio="12"))
+    assert resp["statusCode"] == 200
+    assert store.updates[-1]["folio"] == "12"

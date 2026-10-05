@@ -1,14 +1,16 @@
 import json
 
+from typing import Literal
+
 from pydantic import BaseModel, ValidationError
 
 from shared.activation import liberar_llave_natural
-from shared.audit import audit
+from shared.audit import actor_from, audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.lock import asset_lock
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
-from shared.generic_tire import is_generic_catalog
+from shared.tire_events import has_event, record_event
 from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
@@ -38,6 +40,13 @@ class CreateTireRequest(BaseModel):
     cost: float | None = None
     supplier_id: int | None = None
     life_number: int | None = None
+    # Cómo entró a Quinta. Si no viene, sale de la condición (status). Las que crea
+    # un paquete llegan como 'unconfirmed': nadie ha confirmado su condición.
+    origin: Literal["new", "used", "renewed", "unconfirmed"] | None = None
+
+
+CONDICIONES = ("new", "used", "renewed")
+MAX_RETREADS = 4  # renovada = vida 2 a MAX_RETREADS + 1 (igual que update.py)
 
 
 def handler(event, context):
@@ -58,11 +67,25 @@ def handler(event, context):
     except Exception as e:
         return sync_fail(f"DB error (tires_catalog lookup): {e}")
 
-    # Una llanta con marca y medida reales no se da de alta sin profundidad: sin
-    # milímetros no se puede saber su desgaste. Solo la genérica ("Desconocida")
-    # entra sin ellos, y queda como llanta con datos pendientes.
-    if not is_generic_catalog(catalog) and not (body.current_depth and body.current_depth > 0):
-        return error(422, "La profundidad (mm) es obligatoria para una llanta con marca y medida")
+    # Ninguna llanta se da de alta sin profundidad: sin milímetros no se puede saber
+    # su desgaste. Aplica también a la genérica. La única excepción son las que crea
+    # un paquete al asignarse (origin 'unconfirmed'): ahí nadie está midiendo, y
+    # quedan como llanta con datos pendientes.
+    if body.origin != "unconfirmed" and not (body.current_depth and body.current_depth > 0):
+        return error(422, "La profundidad (mm) es obligatoria para dar de alta una llanta")
+
+    # Condición y vida: nueva y gallito son vida 1; una renovada trae su vida (2 a 5).
+    if body.status not in CONDICIONES:
+        return error(422, f"status debe ser uno de {', '.join(CONDICIONES)}")
+    if body.status == "renewed":
+        if body.life_number is None or not 2 <= body.life_number <= MAX_RETREADS + 1:
+            return error(422, f"una llanta renovada va de la vida 2 a la {MAX_RETREADS + 1}")
+        life_number = body.life_number
+    else:
+        if body.life_number not in (None, 0, 1):
+            return error(422, "una llanta nueva o gallito es de primera vida (life_number 1)")
+        life_number = 1
+    origin = body.origin or body.status
 
     # A null depth/mileage from the FE is treated as 0 (not a validation error).
     current_depth = body.current_depth if body.current_depth is not None else 0
@@ -112,7 +135,7 @@ def handler(event, context):
         "wheel_index": body.wheel_index,
         "cost": body.cost,
         "supplier_id": body.supplier_id,
-        "life_number": body.life_number,
+        "life_number": life_number,
         "mounted_millage": 0,
         "status": "registering",
         "updated_at": now_ms(),
@@ -191,6 +214,20 @@ def handler(event, context):
     except Exception as e:
         db.rollback()
         return sync_fail(f"DB error (insert tire): {e}")
+
+    # 2b. Historial: el evento 'alta' (una sola vez por llanta, aunque el alta se
+    #     reanude). Best-effort: la llanta ya existe y un fallo al anotarlo no puede
+    #     tumbar el alta.
+    try:
+        if not has_event(db, local_id, "alta"):
+            record_event(db, tire_id=local_id, event_type="alta", company_id=body.company_id,
+                         actor=actor_from(event), origin=origin, life_number=life_number,
+                         depth_mm=current_depth, mileage_km=tire_mileage, cost=body.cost,
+                         unit_id=body.unit_id, mount_position=body.mount_position)
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[tire_events] no se pudo anotar el alta de la llanta {local_id}: {e}")
 
     # 3. Sync con la plataforma. Natural key = id local (tyreCode) -> assume_new (no preexiste).
     try:

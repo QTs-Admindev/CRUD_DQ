@@ -80,14 +80,17 @@ def _validar_datos(db, tire: dict, cambiados: dict) -> str | None:
 
     if "status" in cambiados or "life_number" in cambiados:
         status = cambiados.get("status", tire.get("status"))
-        vida = cambiados.get("life_number", tire.get("life_number"))
         if status not in CONDICIONES:
             return f"status debe ser uno de {', '.join(CONDICIONES)}"
-        if status == "renewed":
-            if vida is None or not 2 <= int(vida) <= MAX_RETREADS + 1:
-                return f"una llanta renovada va de la vida 2 a la {MAX_RETREADS + 1}"
-        elif vida is not None and int(vida) != 1:
-            return "una llanta nueva o usada es de primera vida (life_number 1)"
+        # La vida solo sube con Renovar (POST /tires/{id}/renew), que deja su
+        # evento en el historial. Editar solo corrige nueva <-> gallito.
+        if "life_number" in cambiados and not (
+                status in ("new", "used") and int(cambiados["life_number"] or 1) == 1):
+            return "la vida de la llanta solo cambia con Renovar"
+        if status == "renewed" and tire.get("status") != "renewed":
+            return "para marcarla renovada usa Renovar"
+        if tire.get("status") == "renewed" and status != "renewed":
+            return "una llanta renovada no vuelve a ser nueva o gallito"
 
     if "cost" in cambiados:
         costo = cambiados["cost"]

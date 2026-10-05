@@ -61,6 +61,14 @@ RESOURCES = {
         "columns": "id, company_name, finance_name",
         "prefixed": False, "soft": False, "by_company": False,
     },
+    # Historial de llantas (solo lectura). Filtrable por tire_id, event_type,
+    # origin, etc. Ej.: ?event_type=alta&origin=unconfirmed&company_id=101.
+    "tire_events": {
+        "columns": ("id, tire_id, company_id, event_type, occurred_at, actor, origin, "
+                    "life_number, depth_mm, mileage_km, cost, prev_cost, prev_depth_mm, "
+                    "prev_mileage_km, unit_id, mount_position, details"),
+        "prefixed": True, "soft": False, "by_company": True,
+    },
     # Bitácora de auditoría (tabla real, solo lectura). Filtrable por actor/action/
     # asset_type/asset_id/result/company_id vía los filtros opcionales de abajo.
     "asset_audit_log": {
