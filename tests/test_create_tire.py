@@ -167,10 +167,11 @@ def test_duplicate_folio_same_company_different_prefix_409(wire):
 
 
 def test_null_current_depth_treated_as_zero(wire):
-    # Generic tire: null depth/mileage must not 422, stored as 0.
+    # Package-created tire: null depth/mileage must not 422, stored as 0.
     st = FakeSmartTyre(after=[{"id": 888}])
     store, db = wire(st)
-    resp = mod.handler(_event(catalog=983, current_depth=None, tire_mileage=None), None)
+    resp = mod.handler(_event(catalog=983, current_depth=None, tire_mileage=None,
+                              origin="unconfirmed"), None)
     assert resp["statusCode"] == 200
     data = _body(resp)
     assert store.rows[data["id"]]["current_depth"] == 0
@@ -242,19 +243,20 @@ def test_real_catalog_requires_depth(wire, depth):
     assert store.rows == {} and st.posts == []
 
 
-def test_generic_catalog_allows_missing_depth(wire):
+@pytest.mark.parametrize("depth", [None, 0])
+def test_generic_also_requires_depth(wire, depth):
+    # La genérica tampoco entra sin milímetros si la da de alta una persona.
     st = FakeSmartTyre(after=[{"id": 888}])
     store, db = wire(st)
-    resp = mod.handler(_event(catalog=983, current_depth=None), None)
-    assert resp["statusCode"] == 200
+    resp = mod.handler(_event(catalog=983, current_depth=depth), None)
+    assert resp["statusCode"] == 422
+    assert store.rows == {}
 
 
-def test_generic_by_env_override(wire, monkeypatch):
-    # GENERIC_TIRES_CATALOG_ID marca como genérica una fila aunque su marca no lo diga.
-    monkeypatch.setenv("GENERIC_TIRES_CATALOG_ID", "209")
+def test_package_tire_allows_missing_depth(wire):
     st = FakeSmartTyre(after=[{"id": 888}])
     store, db = wire(st)
-    resp = mod.handler(_event(current_depth=None), None)
+    resp = mod.handler(_event(catalog=983, current_depth=None, origin="unconfirmed"), None)
     assert resp["statusCode"] == 200
 
 

@@ -10,7 +10,6 @@ from shared.config import t
 from shared.db.connection import get_db
 from shared.db.lock import asset_lock
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
-from shared.generic_tire import is_generic_catalog
 from shared.tire_events import has_event, record_event
 from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
@@ -68,11 +67,12 @@ def handler(event, context):
     except Exception as e:
         return sync_fail(f"DB error (tires_catalog lookup): {e}")
 
-    # Una llanta con marca y medida reales no se da de alta sin profundidad: sin
-    # milímetros no se puede saber su desgaste. Solo la genérica ("Desconocida")
-    # entra sin ellos, y queda como llanta con datos pendientes.
-    if not is_generic_catalog(catalog) and not (body.current_depth and body.current_depth > 0):
-        return error(422, "La profundidad (mm) es obligatoria para una llanta con marca y medida")
+    # Ninguna llanta se da de alta sin profundidad: sin milímetros no se puede saber
+    # su desgaste. Aplica también a la genérica. La única excepción son las que crea
+    # un paquete al asignarse (origin 'unconfirmed'): ahí nadie está midiendo, y
+    # quedan como llanta con datos pendientes.
+    if body.origin != "unconfirmed" and not (body.current_depth and body.current_depth > 0):
+        return error(422, "La profundidad (mm) es obligatoria para dar de alta una llanta")
 
     # Condición y vida: nueva y gallito son vida 1; una renovada trae su vida (2 a 5).
     if body.status not in CONDICIONES:
