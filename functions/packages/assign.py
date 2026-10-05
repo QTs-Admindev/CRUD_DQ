@@ -4,6 +4,7 @@ import os
 from pydantic import BaseModel, ValidationError
 
 from shared.audit import audit
+from shared.generic_tire import resolve_generic_catalog_id
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
@@ -28,28 +29,9 @@ def _record(resp: dict) -> dict:
     return data.get("data", data) if isinstance(data, dict) else data
 
 
-# Fila centinela del catálogo genérico: la MISMA que el FE usa para "llanta
-# genérica" (checkbox Desconocida). Resolverla por convención evita depender de
-# un env var y elimina el drift FE<->backend. (brand, model, size, position)
-_GENERIC_SENTINEL = ("Desconocida", "DESCONOCIDA", "DESCONOCIDA", "ALL")
-
-
 def _resolve_generic_catalog_id(db):
-    """Id de la fila genérica de tires_catalog.
-
-    1) Si GENERIC_TIRES_CATALOG_ID viene en el entorno, se respeta (override).
-    2) Si no, se busca por la convención centinela que ya usa el FE.
-    Devuelve int, o None si no existe ninguna.
-    """
-    override = os.environ.get("GENERIC_TIRES_CATALOG_ID")
-    if override:
-        return int(override)
-    brand, model, size, position = _GENERIC_SENTINEL
-    rows = get_where(
-        db, "tires_catalog",
-        "brand = %s AND model = %s AND size = %s AND position = %s",
-        [brand, model, size, position], 1)
-    return rows[0]["id"] if rows else None
+    """Id de la fila genérica de tires_catalog (ver shared/generic_tire)."""
+    return resolve_generic_catalog_id(db, get_where)
 
 
 def _audit_partial(db, event, context, pkg, pid, company_id, stage, pos, done, total, reason=None):

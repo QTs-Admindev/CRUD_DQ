@@ -8,6 +8,7 @@ from shared.config import t
 from shared.db.connection import get_db
 from shared.db.lock import asset_lock
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
+from shared.generic_tire import is_generic_catalog
 from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
 from shared.smarttyre.sync import SmartTyreNotResolved, resolve_or_create
@@ -51,10 +52,17 @@ def handler(event, context):
     # Validate the tire catalog exists before creating anything (tires_catalog is a
     # real, non-prefixed reference table, like unit_catalog).
     try:
-        if not get_by_id(db, "tires_catalog", body.tires_catalog_id):
+        catalog = get_by_id(db, "tires_catalog", body.tires_catalog_id)
+        if not catalog:
             return error(422, "tires_catalog_id no existe")
     except Exception as e:
         return sync_fail(f"DB error (tires_catalog lookup): {e}")
+
+    # Una llanta con marca y medida reales no se da de alta sin profundidad: sin
+    # milímetros no se puede saber su desgaste. Solo la genérica ("Desconocida")
+    # entra sin ellos, y queda como llanta con datos pendientes.
+    if not is_generic_catalog(catalog) and not (body.current_depth and body.current_depth > 0):
+        return error(422, "La profundidad (mm) es obligatoria para una llanta con marca y medida")
 
     # A null depth/mileage from the FE is treated as 0 (not a validation error).
     current_depth = body.current_depth if body.current_depth is not None else 0

@@ -45,7 +45,7 @@ def test_tire_resume_uses_get_before_post(monkeypatch):
                 "daijin_id": None, "is_deleted": 0}
     calls = _wire_tire(monkeypatch, existing)
     resp = tire_mod.handler(_ev({"prefix": "TEST", "folio": "F1", "company_id": 100,
-                                 "tires_catalog_id": 1}), None)
+                                 "tires_catalog_id": 1, "current_depth": 12}), None)
     assert resp["statusCode"] == 200
     assert calls["assume_new"] is False          # resume -> confirming GET-before-POST
     assert calls["list_filter"]["tyreCode"] == "5"
@@ -54,7 +54,7 @@ def test_tire_resume_uses_get_before_post(monkeypatch):
 def test_tire_new_uses_assume_new(monkeypatch):
     calls = _wire_tire(monkeypatch, None)
     resp = tire_mod.handler(_ev({"prefix": "TEST", "folio": "F2", "company_id": 100,
-                                 "tires_catalog_id": 1}), None)
+                                 "tires_catalog_id": 1, "current_depth": 12}), None)
     assert resp["statusCode"] == 200
     assert calls["assume_new"] is True           # nuevo -> insert directo
 
