@@ -31,7 +31,8 @@ class FakeStore:
         self.rows = {}
         self.seq = 0
         # Reference catalog rows (real, non-prefixed table) keyed by id.
-        self.catalog = {209: {"id": 209, "brand": "X", "model": "Y"}}
+        self.catalog = {209: {"id": 209, "brand": "X", "model": "Y"},
+                        983: {"id": 983, "brand": "Desconocida", "model": "DESCONOCIDA"}}
 
     def get_by_id(self, db, table, rid):
         if table == "tires_catalog":
@@ -94,8 +95,9 @@ def wire(monkeypatch):
 
 
 def _event(prefix="TSM", folio="9001", company=100, catalog=209, **extra):
+    # Una llanta con catálogo real exige profundidad: se manda una por defecto.
     payload = {"prefix": prefix, "folio": folio, "company_id": company,
-               "tires_catalog_id": catalog, **extra}
+               "tires_catalog_id": catalog, "current_depth": 12, **extra}
     return {"body": json.dumps(payload)}
 
 
@@ -165,10 +167,10 @@ def test_duplicate_folio_same_company_different_prefix_409(wire):
 
 
 def test_null_current_depth_treated_as_zero(wire):
-    # FE may send null depth/mileage; must not 422, should be stored as 0.
+    # Generic tire: null depth/mileage must not 422, stored as 0.
     st = FakeSmartTyre(after=[{"id": 888}])
     store, db = wire(st)
-    resp = mod.handler(_event(current_depth=None, tire_mileage=None), None)
+    resp = mod.handler(_event(catalog=983, current_depth=None, tire_mileage=None), None)
     assert resp["statusCode"] == 200
     data = _body(resp)
     assert store.rows[data["id"]]["current_depth"] == 0
@@ -227,3 +229,30 @@ def test_un_prefijo_nuevo_sigue_chocando_con_el_folio_ocupado(wire):
     resp = mod.handler(_event(prefix="ZZZ", folio="9001", company=100), None)
 
     assert resp["statusCode"] == 409
+
+
+@pytest.mark.parametrize("depth", [None, 0])
+def test_real_catalog_requires_depth(wire, depth):
+    # Marca y medida reales sin milímetros: no se da de alta.
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(current_depth=depth), None)
+    assert resp["statusCode"] == 422
+    assert "profundidad" in json.dumps(_body(resp))
+    assert store.rows == {} and st.posts == []
+
+
+def test_generic_catalog_allows_missing_depth(wire):
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(catalog=983, current_depth=None), None)
+    assert resp["statusCode"] == 200
+
+
+def test_generic_by_env_override(wire, monkeypatch):
+    # GENERIC_TIRES_CATALOG_ID marca como genérica una fila aunque su marca no lo diga.
+    monkeypatch.setenv("GENERIC_TIRES_CATALOG_ID", "209")
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(current_depth=None), None)
+    assert resp["statusCode"] == 200

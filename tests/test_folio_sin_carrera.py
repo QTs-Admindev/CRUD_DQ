@@ -65,7 +65,7 @@ def test_el_alta_serializa_por_folio_y_compania(db_locks, monkeypatch):
 
     tires_create.handler({"body": json.dumps(
         {"prefix": "TSM", "folio": "9001", "company_id": 100,
-         "tires_catalog_id": 209})}, None)
+         "tires_catalog_id": 209, "current_depth": 12})}, None)
 
     assert "folio:100:9001" in db_locks.locks, "el alta no serializa el folio"
     assert db_locks.liberados == db_locks.locks, "el lock no se soltó"
