@@ -1,6 +1,6 @@
 import json
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from shared.audit import audit
 from shared.config import ADMIN_COMPANY_ID, t
@@ -9,7 +9,7 @@ from shared.db.ops import get_by_id, insert, update
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 
-from functions.packages.layout import tire_slots
+from functions.packages.layout import clean_package_name, tire_slots
 # Reusamos EXACTO el alta de tbox y sensores (local-first idempotente + sync a
 # Dajin vía resolve_or_create + audit). Aquí solo orquestamos y les ponemos el
 # package_id encima. Referencias a nivel módulo para poder mockearlas en tests.
@@ -28,6 +28,14 @@ class CreatePackageRequest(BaseModel):
     # Un paquete SIEMPRE se prepara en la compañía admin (2). El campo es opcional;
     # si viene, se valida que sea exactamente ADMIN_COMPANY_ID.
     company_id: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        # Al crear es opcional: vacío = nombre por defecto.
+        if v is None or not str(v).strip():
+            return None
+        return clean_package_name(v)
 
 
 def _record(resp: dict) -> dict:

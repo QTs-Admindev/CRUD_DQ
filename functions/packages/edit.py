@@ -1,6 +1,6 @@
 import json
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from shared.audit import audit
 from shared.config import t
@@ -10,7 +10,7 @@ from shared.utils.clock import now_ms
 from shared.utils.response import error, ok, pending
 from shared.utils.validators import validate_hex12
 
-from functions.packages.layout import tire_slots
+from functions.packages.layout import clean_package_name, tire_slots
 # Reusamos EXACTO el alta de tbox y sensores (local-first idempotente + sync a la
 # plataforma vía resolve_or_create + audit), igual que create.py. Referencias a
 # nivel módulo para poder mockearlas en tests.
@@ -24,6 +24,11 @@ class EditPackageRequest(BaseModel):
     tboxCode: str | None = None
     sensorCodes: list[str] | None = None
 
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        return clean_package_name(v)
+
 
 def _record(resp: dict) -> dict:
     """Extrae el registro del cuerpo de una respuesta de create (ok o pending)."""
@@ -32,8 +37,10 @@ def _record(resp: dict) -> dict:
 
 
 def handler(event, context):
-    # PUT /packages/{id} -> edita un paquete AÚN preparado (prepared): nombre, tbox
-    # y/o el set completo de sensores. Un paquete asignado/retirado ya no se edita.
+    # PUT /packages/{id} -> edita nombre, tbox y/o el set completo de sensores.
+    # El nombre solo identifica, así que se edita también en un paquete asignado;
+    # el hardware (tbox y sensores) solo mientras está preparado (prepared). Un
+    # paquete retirado ya no se edita.
     try:
         pid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
@@ -47,8 +54,10 @@ def handler(event, context):
     pkg = get_by_id(db, t("packages"), pid)
     if not pkg:
         return error(404, "Paquete no encontrado")
-    if pkg.get("status") != "prepared":
-        return error(409, f"El paquete no se puede editar (status={pkg.get('status')})")
+    status = pkg.get("status")
+    touches_hardware = body.tboxCode is not None or body.sensorCodes is not None
+    if status == "retired" or (touches_hardware and status != "prepared"):
+        return error(409, f"El paquete no se puede editar (status={status})")
 
     company_id = pkg.get("company_id")
     headers = (event or {}).get("headers") or {}

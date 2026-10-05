@@ -547,14 +547,44 @@ def _edit_event(pid, **body):
     return {"pathParameters": {"id": str(pid)}, "body": json.dumps(body)}
 
 
-def test_edit_rejects_non_prepared(monkeypatch):
+def test_edit_hardware_rejected_when_not_prepared(monkeypatch):
     store, db = Store(), FakeDB()
     _seed_editable(store, status="assigned")
     _wire_edit(monkeypatch, store, db)
-    resp = pedit.handler(_edit_event(1, name="nuevo"), None)
+    resp = pedit.handler(_edit_event(1, name="nuevo", tboxCode="DD44EE55FF66"), None)
     assert resp["statusCode"] == 409
     assert "status=assigned" in json.dumps(_body(resp))
-    # nada cambió
+    # nada cambió, ni el nombre
+    assert store.tables["packages"][1]["name"] == "kit"
+
+
+def test_edit_name_allowed_when_assigned(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_editable(store, status="assigned")
+    _wire_edit(monkeypatch, store, db)
+    resp = pedit.handler(_edit_event(1, name="  Caja 12 Monterrey  "), None)
+    assert resp["statusCode"] == 200
+    assert store.tables["packages"][1]["name"] == "Caja 12 Monterrey"
+    # el hardware no se tocó
+    assert store.tables["tboxes"][50]["package_id"] == 1
+
+
+def test_edit_rejects_retired(monkeypatch):
+    store, db = Store(), FakeDB()
+    _seed_editable(store, status="retired")
+    _wire_edit(monkeypatch, store, db)
+    resp = pedit.handler(_edit_event(1, name="nuevo"), None)
+    assert resp["statusCode"] == 409
+    assert store.tables["packages"][1]["name"] == "kit"
+
+
+@pytest.mark.parametrize("name", ["", "   ", "x" * 256])
+def test_edit_rejects_bad_name(monkeypatch, name):
+    store, db = Store(), FakeDB()
+    _seed_editable(store)
+    _wire_edit(monkeypatch, store, db)
+    resp = pedit.handler(_edit_event(1, name=name), None)
+    assert resp["statusCode"] == 422
     assert store.tables["packages"][1]["name"] == "kit"
 
 

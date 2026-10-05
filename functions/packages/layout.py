@@ -32,3 +32,19 @@ def tire_slots(catalog: dict) -> list[dict]:
                 "mount_position": pos,
             })
     return slots
+
+
+# Nombre libre del paquete: solo sirve para identificarlo, no lo usa ninguna
+# regla. Se recorta y no puede quedar vacío ni pasar de 255 (la columna).
+PACKAGE_NAME_MAX = 255
+
+
+def clean_package_name(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        raise ValueError("El nombre del paquete no puede quedar vacío")
+    if len(v) > PACKAGE_NAME_MAX:
+        raise ValueError(f"El nombre del paquete no puede pasar de {PACKAGE_NAME_MAX} caracteres")
+    return v
