@@ -92,6 +92,14 @@ functions:
           method: put
           cors: ${self:custom.cors}
 
+  renewTire:
+    handler: functions/tires/renew.handler
+    events:
+      - http:
+          path: /tires/{id}/renew
+          method: post
+          cors: ${self:custom.cors}
+
   createSensor:
     handler: functions/sensors/create.handler
     events:

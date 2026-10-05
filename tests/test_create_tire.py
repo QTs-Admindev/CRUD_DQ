@@ -256,3 +256,61 @@ def test_generic_by_env_override(wire, monkeypatch):
     store, db = wire(st)
     resp = mod.handler(_event(current_depth=None), None)
     assert resp["statusCode"] == 200
+
+
+# ---------- condición y evento 'alta' del historial ----------
+
+@pytest.fixture
+def events(monkeypatch):
+    got = []
+    monkeypatch.setattr(mod, "has_event", lambda db, tid, et: any(
+        e["tire_id"] == tid and e["event_type"] == et for e in got))
+    monkeypatch.setattr(mod, "record_event", lambda db, **kw: got.append(kw) or kw)
+    return got
+
+
+def test_alta_deja_su_evento_con_origen(wire, events):
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(status="used", cost=5000), None)
+    assert resp["statusCode"] == 200
+    (ev,) = events
+    assert ev["event_type"] == "alta" and ev["origin"] == "used"
+    assert ev["life_number"] == 1 and ev["cost"] == 5000 and ev["depth_mm"] == 12
+
+
+def test_alta_de_paquete_queda_sin_confirmar(wire, events):
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    resp = mod.handler(_event(catalog=983, current_depth=None, origin="unconfirmed"), None)
+    assert resp["statusCode"] == 200
+    assert events[0]["origin"] == "unconfirmed"
+
+
+def test_alta_renovada_trae_su_vida(wire, events):
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    assert mod.handler(_event(status="renewed", life_number=3), None)["statusCode"] == 200
+    assert events[0]["origin"] == "renewed" and events[0]["life_number"] == 3
+
+
+@pytest.mark.parametrize("extra", [
+    {"status": "renewed"}, {"status": "renewed", "life_number": 1},
+    {"status": "renewed", "life_number": 6}, {"status": "new", "life_number": 2},
+    {"status": "discarded"}, {"origin": "otro"},
+])
+def test_condicion_invalida_es_422(wire, events, extra):
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    assert mod.handler(_event(**extra), None)["statusCode"] == 422
+    assert store.rows == {} and events == []
+
+
+def test_un_fallo_del_historial_no_tumba_el_alta(wire, monkeypatch):
+    def boom(db, **kw):
+        raise RuntimeError("tire_events no existe")
+    monkeypatch.setattr(mod, "has_event", lambda *a: False)
+    monkeypatch.setattr(mod, "record_event", boom)
+    st = FakeSmartTyre(after=[{"id": 888}])
+    store, db = wire(st)
+    assert mod.handler(_event(), None)["statusCode"] == 200
