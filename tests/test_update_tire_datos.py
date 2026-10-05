@@ -163,3 +163,47 @@ def test_una_renovada_se_edita_si_no_toca_la_vida(store):
     resp = _put(_formulario(status="renewed", life_number=3, folio="12"))
     assert resp["statusCode"] == 200
     assert store.updates[-1]["folio"] == "12"
+
+
+# ---------- confirmar la condición de una llanta "sin confirmar" ----------
+
+@pytest.fixture
+def eventos(monkeypatch):
+    got = []
+    monkeypatch.setattr(tires_update, "record_event", lambda db, **kw: got.append(kw) or kw)
+    return got
+
+
+def test_confirmar_nueva_aunque_no_cambie(store, eventos, monkeypatch):
+    monkeypatch.setattr(tires_update, "_sin_confirmar", lambda db, tid: True)
+    resp = _put({"status": "new", "confirm_condition": True})
+    assert resp["statusCode"] == 200
+    (ev,) = eventos
+    assert ev["event_type"] == "confirmacion" and ev["origin"] == "new" and ev["life_number"] == 1
+
+
+def test_confirmar_renovada_con_su_vida(store, eventos, monkeypatch):
+    monkeypatch.setattr(tires_update, "_sin_confirmar", lambda db, tid: True)
+    resp = _put({"status": "renewed", "life_number": 3, "confirm_condition": True})
+    assert resp["statusCode"] == 200
+    assert store.tire["status"] == "renewed" and store.tire["life_number"] == 3
+    assert eventos[0]["origin"] == "renewed"
+
+
+def test_confirmar_dos_veces_es_409(store, eventos, monkeypatch):
+    monkeypatch.setattr(tires_update, "_sin_confirmar", lambda db, tid: False)
+    resp = _put({"status": "used", "confirm_condition": True})
+    assert resp["statusCode"] == 409
+    assert store.updates == [] and eventos == []
+
+
+@pytest.mark.parametrize("body", [
+    {"confirm_condition": True},
+    {"status": "renewed", "confirm_condition": True},
+    {"status": "renewed", "life_number": 6, "confirm_condition": True},
+    {"status": "discarded", "confirm_condition": True},
+])
+def test_confirmar_con_datos_invalidos_es_422(store, eventos, monkeypatch, body):
+    monkeypatch.setattr(tires_update, "_sin_confirmar", lambda db, tid: True)
+    assert _put(body)["statusCode"] == 422
+    assert eventos == []

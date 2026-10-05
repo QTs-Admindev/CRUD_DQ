@@ -3,11 +3,12 @@ import json
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from shared.activation import MARCA_BORRADO
-from shared.audit import audit
+from shared.audit import actor_from, audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.lock import asset_lock
 from shared.db.ops import get_by_id, get_where, update
+from shared.tire_events import record_event
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
@@ -37,6 +38,11 @@ class UpdateTireRequest(BaseModel):
     cost: float | None = None
     current_depth: float | None = None
     tire_mileage: float | None = None
+    # Confirmar la condición de una llanta "sin confirmar" (las que crea un
+    # paquete): manda status (y life_number si es renovada) aunque coincidan con
+    # lo guardado, y deja el evento 'confirmacion' en el historial. Es la única
+    # vía para fijar de entrada que una llanta llegó renovada sin pasar por Renovar.
+    confirm_condition: bool = False
 
 
 _DATOS = ("tires_catalog_id", "status", "life_number", "cost", "current_depth", "tire_mileage")
@@ -51,6 +57,17 @@ def _igual(nuevo, guardado) -> bool:
         return abs(float(nuevo) - float(guardado)) < 1e-9
     except (TypeError, ValueError):
         return str(nuevo) == str(guardado)
+
+
+def _sin_confirmar(db, tire_id) -> bool:
+    """¿La llanta entró sin condición confirmada y nadie la ha confirmado aún?"""
+    alta = get_where(db, t("tire_events"),
+                     "tire_id = %s AND event_type = 'alta' AND origin = 'unconfirmed'",
+                     [tire_id], 1)
+    if not alta:
+        return False
+    return not get_where(db, t("tire_events"),
+                         "tire_id = %s AND event_type = 'confirmacion'", [tire_id], 1)
 
 
 def _decimales_ok(valor: float, decimales: int) -> bool:
@@ -140,6 +157,26 @@ def handler(event, context):
         return error(404, "Llanta no encontrada")
 
     pedido = body.model_dump()
+    confirmar = pedido.pop("confirm_condition")
+    confirmada = None
+    if confirmar:
+        status = pedido.get("status")
+        if status not in CONDICIONES:
+            return error(422, f"para confirmar la condición manda status: {', '.join(CONDICIONES)}")
+        vida = pedido.get("life_number")
+        if status == "renewed":
+            if vida is None or not 2 <= int(vida) <= MAX_RETREADS + 1:
+                return error(422, f"una llanta renovada va de la vida 2 a la {MAX_RETREADS + 1}")
+            vida = int(vida)
+        else:
+            vida = 1
+        if not _sin_confirmar(db, tire_id):
+            return error(409, "La condición de esta llanta ya está confirmada")
+        confirmada = {"status": status, "life_number": vida}
+        # status y vida ya quedaron validados aquí: no pasan por las reglas de
+        # edición (que no dejan marcar renovada ni mover la vida).
+        pedido["status"] = None
+        pedido["life_number"] = None
 
     if pedido["company_id"] is not None and pedido["company_id"] != tire.get("company_id"):
         return error(422, "company_id no coincide con la compañía de la llanta; "
@@ -167,6 +204,8 @@ def handler(event, context):
         cambios[campo] = str(valor).strip()
 
     cambios.update(cambiados)
+    if confirmada:
+        cambios.update(confirmada)
 
     if not cambios:
         return ok(tire)
@@ -203,6 +242,15 @@ def handler(event, context):
                                       f"en esta compañía")
 
             record = update(db, t("tires"), tire_id, cambios)
+            if confirmada:
+                record_event(db, tire_id=tire_id, event_type="confirmacion",
+                             company_id=tire.get("company_id"), actor=actor_from(event),
+                             origin=confirmada["status"], life_number=confirmada["life_number"],
+                             depth_mm=record.get("current_depth"), cost=record.get("cost"),
+                             unit_id=record.get("unit_id"),
+                             mount_position=record.get("mount_position"),
+                             details={"prev_status": tire.get("status"),
+                                      "prev_life_number": tire.get("life_number")})
             db.commit()
     except Exception as e:
         db.rollback()
