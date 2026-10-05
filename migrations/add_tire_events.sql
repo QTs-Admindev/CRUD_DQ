@@ -28,9 +28,8 @@
 --  ⚠️ El CREATE TABLE hace auto-commit. El backup del PASO 0 es la red de
 --     seguridad del UPDATE de life_number.
 --
---  DEV: el stage dev usa prefijo `test_`. Para correrla allá, reemplaza en TODO
---  el archivo `tires` por `test_tires` y `tire_events` por `test_tire_events`
---  (tires_catalog no lleva prefijo).
+--  DEV: el stage dev corre sin TABLE_PREFIX y usa las mismas tablas, así que
+--  basta con correrla una vez. Aplicada en prod el 5-oct-2026.
 --
 --  Correr PASO por PASO, revisando las verificaciones antes de avanzar.
 -- ============================================================================
