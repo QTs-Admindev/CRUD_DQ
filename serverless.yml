@@ -60,6 +60,17 @@ functions:
           method: post
           cors: ${self:custom.cors}
 
+  createVehicleWithPackage:
+    handler: functions/vehicles/create_with_package.handler
+    timeout: 29
+    environment:
+      GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
+    events:
+      - http:
+          path: /vehicles/with-package
+          method: post
+          cors: ${self:custom.cors}
+
   updateVehicle:
     handler: functions/vehicles/update.handler
     events:
