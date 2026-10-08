@@ -34,7 +34,10 @@ def handler(event, context):
         return error(409, "El tbox está asignado a una unidad; quítalo primero")
 
     try:
-        rec = update(db, t("tboxes"), rid, {"company_id": body.company_id, "updated_at": now_ms()})
+        cambios = {"company_id": body.company_id, "updated_at": now_ms()}
+        if body.company_id != rec.get("company_id"):
+            cambios["warehouse_id"] = None  # el almacén era de la compañía anterior
+        rec = update(db, t("tboxes"), rid, cambios)
         db.commit()
         return ok(rec)
     except Exception as e:

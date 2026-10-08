@@ -131,6 +131,10 @@ def test_company_change_cascades(monkeypatch):
     assert store.rows["tires"][10]["company_id"] == 200   # mounted tire
     assert store.rows["sensors"][20]["company_id"] == 200  # its sensor
     assert store.rows["tboxes"][30]["company_id"] == 200   # the unit's tbox
+    # La sede y los almacenes eran de la compañía anterior.
+    assert store.rows["units"][1]["site_id"] is None
+    for tabla, rid in (("tires", 10), ("sensors", 20), ("tboxes", 30)):
+        assert store.rows[tabla][rid]["warehouse_id"] is None
 
 
 def test_empty_body_is_noop_200(monkeypatch):

@@ -325,6 +325,9 @@ def test_si_la_compania_existe_el_cambio_pasa(monkeypatch, mod, row):
 
     assert resp["statusCode"] == 200
     assert store.rows[1]["company_id"] == 300
+    # La sede o el almacén eran de la compañía anterior.
+    columna = "site_id" if mod is vehicles_update else "warehouse_id"
+    assert columna in store.rows[1] and store.rows[1][columna] is None
 
 
 # ------------------------------------------------- 4. el update de llantas, en detalle

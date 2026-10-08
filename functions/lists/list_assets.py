@@ -29,7 +29,7 @@ RESERVED_PARAMS = {"company_id", "limit", "offset", "paged", "is_deleted",
 RESOURCES = {
     "units": {
         "columns": ("id, unit_identifier, company_id, daijin_id, status, tbox_id, "
-                    "unit_catalog_id, vin, plates, mileage, "
+                    "unit_catalog_id, vin, plates, mileage, site_id, "
                     "created_at, updated_at"),
         "prefixed": True, "soft": True, "by_company": True,
     },
@@ -37,16 +37,28 @@ RESOURCES = {
         "columns": ("id, prefix, folio, company_id, daijin_id, status, "
                     "unit_id, sensor_id, is_mounted, axle_index, wheel_index, "
                     "mount_position, tires_catalog_id, current_depth, tire_mileage, "
-                    "life_number, cost, created_at, updated_at"),
+                    "life_number, cost, warehouse_id, created_at, updated_at"),
         "prefixed": True, "soft": True, "by_company": True,
     },
     "sensors": {
-        "columns": "id, sensorCode, company_id, daijin_id, status, package_id, mount_position, batch_code",
+        "columns": ("id, sensorCode, company_id, daijin_id, status, package_id, mount_position, "
+                    "batch_code, warehouse_id"),
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tboxes": {
-        "columns": "id, tboxCode, version, company_id, daijin_id, status, package_id, batch_code",
+        "columns": ("id, tboxCode, version, company_id, daijin_id, status, package_id, batch_code, "
+                    "warehouse_id"),
         "prefixed": True, "soft": True, "by_company": True,
+    },
+    # Sedes y almacenes (para selects). Se borran de verdad, solo vacíos: no hay
+    # is_deleted. GET /sites devuelve además el árbol con conteos.
+    "sites": {
+        "columns": "id, company_id, name, created_at, updated_at",
+        "prefixed": True, "soft": False, "by_company": True,
+    },
+    "warehouses": {
+        "columns": "id, company_id, site_id, name, type, created_at, updated_at",
+        "prefixed": True, "soft": False, "by_company": True,
     },
     # Catálogos / referencia (tablas reales, solo lectura, sin soft-delete).
     "unit_catalog": {

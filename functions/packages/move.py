@@ -36,14 +36,16 @@ def handler(event, context):
     if pkg.get("status") != "prepared":
         return error(409, f"El paquete no se puede mover (status={pkg.get('status')})")
 
-    # Cascada local: package + tbox + sensores toman la nueva compañía.
+    # Cascada local: package + tbox + sensores toman la nueva compañía y dejan el
+    # almacén de la anterior.
     try:
         ts = now_ms()
         update(db, t("packages"), pid, {"company_id": body.company_id, "updated_at": ts})
+        nuevo = {"company_id": body.company_id, "warehouse_id": None, "updated_at": ts}
         for tbox in get_where(db, t("tboxes"), "package_id = %s", [pid], 50):
-            update(db, t("tboxes"), tbox["id"], {"company_id": body.company_id, "updated_at": ts})
+            update(db, t("tboxes"), tbox["id"], nuevo)
         for sensor in get_where(db, t("sensors"), "package_id = %s", [pid], 500):
-            update(db, t("sensors"), sensor["id"], {"company_id": body.company_id, "updated_at": ts})
+            update(db, t("sensors"), sensor["id"], nuevo)
         db.commit()
     except Exception as e:
         db.rollback()
