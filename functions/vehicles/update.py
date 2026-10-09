@@ -58,6 +58,7 @@ def handler(event, context):
         if not get_by_id(db, "companies", body.company_id):
             return error(422, "company_id no existe")
         changes["company_id"] = body.company_id
+        changes["site_id"] = None  # la sede era de la compañía anterior
         cascade_company_id = body.company_id
 
     # unit_catalog_id (model): validate the new catalog and, when the unit is already
@@ -122,13 +123,16 @@ def handler(event, context):
             )
             for tire in mounted:
                 update(db, t("tires"), tire["id"],
-                       {"company_id": cascade_company_id, "updated_at": now_ms()})
+                       {"company_id": cascade_company_id, "warehouse_id": None,
+                        "updated_at": now_ms()})
                 if tire.get("sensor_id"):
                     update(db, t("sensors"), tire["sensor_id"],
-                           {"company_id": cascade_company_id, "updated_at": now_ms()})
+                           {"company_id": cascade_company_id, "warehouse_id": None,
+                            "updated_at": now_ms()})
             if unit.get("tbox_id"):
                 update(db, t("tboxes"), unit["tbox_id"],
-                       {"company_id": cascade_company_id, "updated_at": now_ms()})
+                       {"company_id": cascade_company_id, "warehouse_id": None,
+                        "updated_at": now_ms()})
 
         rec = update(db, t("units"), unit_id, changes)
         db.commit()

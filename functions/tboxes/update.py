@@ -106,6 +106,8 @@ def handler(event, context):
             mysql_payload["daijin_id"] = daijin_id
             healed_id = daijin_id
 
+    if "company_id" in mysql_payload and mysql_payload["company_id"] != tbox.get("company_id"):
+        mysql_payload["warehouse_id"] = None  # el almacén era de la compañía anterior
     mysql_payload["updated_at"] = now_ms()
 
     try:

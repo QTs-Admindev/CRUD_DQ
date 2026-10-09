@@ -106,6 +106,8 @@ def handler(event, context):
             payload["daijin_id"] = daijin_id
             healed_id = daijin_id
 
+    if "company_id" in payload and payload["company_id"] != sensor.get("company_id"):
+        payload["warehouse_id"] = None  # el almacén era de la compañía anterior
     payload["updated_at"] = now_ms()
 
     try:

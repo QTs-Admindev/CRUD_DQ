@@ -412,6 +412,79 @@ functions:
           method: post
           cors: ${self:custom.cors}
 
+  # Sedes y almacenes por compañía. Operación local: la plataforma no los conoce.
+  listSites:
+    handler: functions/sites/list.handler
+    events:
+      - http:
+          path: /sites
+          method: get
+          cors: ${self:custom.cors}
+
+  createSite:
+    handler: functions/sites/create.handler
+    events:
+      - http:
+          path: /sites
+          method: post
+          cors: ${self:custom.cors}
+
+  updateSite:
+    handler: functions/sites/update.handler
+    events:
+      - http:
+          path: /sites/{id}
+          method: put
+          cors: ${self:custom.cors}
+
+  deleteSite:
+    handler: functions/sites/delete.handler
+    events:
+      - http:
+          path: /sites/{id}
+          method: delete
+          cors: ${self:custom.cors}
+
+  assignUnitsToSite:
+    handler: functions/sites/assign.handler
+    events:
+      - http:
+          path: /sites/assign
+          method: post
+          cors: ${self:custom.cors}
+
+  createWarehouse:
+    handler: functions/warehouses/create.handler
+    events:
+      - http:
+          path: /warehouses
+          method: post
+          cors: ${self:custom.cors}
+
+  updateWarehouse:
+    handler: functions/warehouses/update.handler
+    events:
+      - http:
+          path: /warehouses/{id}
+          method: put
+          cors: ${self:custom.cors}
+
+  deleteWarehouse:
+    handler: functions/warehouses/delete.handler
+    events:
+      - http:
+          path: /warehouses/{id}
+          method: delete
+          cors: ${self:custom.cors}
+
+  assignToWarehouse:
+    handler: functions/warehouses/assign.handler
+    events:
+      - http:
+          path: /warehouses/assign
+          method: post
+          cors: ${self:custom.cors}
+
   # Barrido de reconciliación: cierra creates 'registering' y borrados pendientes en la plataforma.
   reconcile:
     handler: functions/reconciliation/reconcile.handler
