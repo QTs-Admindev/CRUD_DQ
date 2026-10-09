@@ -15,8 +15,8 @@ from shared.utils.response import error, ok
 class CreateWarehouseRequest(BaseModel):
     company_id: int
     name: str
-    # Opcional: un almacén puede no estar en ninguna sede.
-    site_id: int | None = None
+    # Obligatoria: todo almacén vive en una sede de su compañía.
+    site_id: int
     type: Literal["general", "scrap", "retreading"] = "general"
 
     @field_validator("name")
@@ -26,7 +26,7 @@ class CreateWarehouseRequest(BaseModel):
 
 
 def handler(event, context):
-    # POST /warehouses -> nuevo almacén de una compañía, opcionalmente en una sede.
+    # POST /warehouses -> nuevo almacén en una sede de la compañía.
     try:
         body = CreateWarehouseRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
@@ -35,11 +35,9 @@ def handler(event, context):
     db = get_db()
     if not get_by_id(db, "companies", body.company_id):
         return error(422, "company_id no existe")
-    sede = None
-    if body.site_id is not None:
-        sede = get_by_id(db, t("sites"), body.site_id)
-        if not sede or sede["company_id"] != body.company_id:
-            return error(422, "La sede no existe en esa compañía")
+    sede = get_by_id(db, t("sites"), body.site_id)
+    if not sede or sede["company_id"] != body.company_id:
+        return error(422, "La sede no existe en esa compañía")
 
     try:
         ts = now_ms()
@@ -47,7 +45,7 @@ def handler(event, context):
             "company_id": body.company_id, "name": body.name, "type": body.type,
             "site_id": body.site_id,
             # `yard` es la sede en texto (Quinta 1) y parte del UNIQUE del nombre.
-            "yard": sede["name"] if sede else "",
+            "yard": sede["name"],
             "created_at": ts, "updated_at": ts,
         })
         db.commit()

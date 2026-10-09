@@ -35,7 +35,8 @@ CREATE TABLE sites (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INT NOT NUL
   name TEXT NOT NULL, created_at INT, updated_at INT, UNIQUE (company_id, name));
 CREATE TABLE warehouses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INT NOT NULL,
   name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'general', yard TEXT DEFAULT '',
-  site_id INT, created_at INT, updated_at INT, UNIQUE (company_id, name, yard));
+  site_id INT NOT NULL REFERENCES sites (id), created_at INT, updated_at INT,
+  UNIQUE (company_id, name, yard));
 CREATE TABLE warehouse_tires (id INTEGER PRIMARY KEY, warehouse_id INT NOT NULL
   REFERENCES warehouses (id), tire_id INT);
 CREATE TABLE units (id INTEGER PRIMARY KEY, company_id INT, site_id INT, tbox_id INT,
@@ -154,9 +155,10 @@ def _sede(db, company_id, nombre):
 
 
 def _almacen(db, company_id, nombre, site_id=None):
-    body = {"company_id": company_id, "name": nombre}
-    if site_id is not None:
-        body["site_id"] = site_id
+    # Sin sede explícita le crea una propia: un almacén siempre vive en una sede.
+    if site_id is None:
+        site_id = _sede(db, company_id, f"Base {nombre}")
+    body = {"company_id": company_id, "name": nombre, "site_id": site_id}
     return _ok(w_create.handler(_ev(body), None))["id"]
 
 
@@ -287,22 +289,37 @@ def test_mismo_nombre_de_almacen_en_sedes_distintas_si_se_puede(db):
     assert resp["statusCode"] == 409
 
 
-def test_almacen_sin_sede_sale_aparte_en_el_listado(db):
-    _almacen(db, 2, "Inventario Quinta")
+def test_almacen_sin_sede_es_422(db):
+    resp = w_create.handler(_ev({"company_id": 2, "name": "Inventario Quinta"}), None)
+    assert resp["statusCode"] == 422
+    resp = w_create.handler(_ev({"company_id": 2, "name": "Inventario Quinta",
+                                 "site_id": None}), None)
+    assert resp["statusCode"] == 422
+
+
+def test_sede_inexistente_es_422(db):
+    resp = w_create.handler(_ev({"company_id": 8, "name": "General", "site_id": 999}), None)
+    assert resp["statusCode"] == 422
+
+
+def test_listado_trae_los_almacenes_dentro_de_su_sede(db):
+    sid = _sede(db, 2, "Matriz")
+    _almacen(db, 2, "Inventario Quinta", sid)
     out = _ok(s_list.handler(_ev(company_id=2), None))
-    assert [w["name"] for w in out["unassigned_warehouses"]] == ["Inventario Quinta"]
+    assert "unassigned_warehouses" not in out
+    assert [w["name"] for w in out["sites"][0]["warehouses"]] == ["Inventario Quinta"]
 
 
-def test_mover_almacen_de_sede_y_sacarlo(db):
+def test_mover_almacen_de_sede_pero_no_sacarlo(db):
     a, b = _sede(db, 8, "SLP"), _sede(db, 8, "ZUM")
     wid = _almacen(db, 8, "General", a)
     rec = _ok(w_update.handler(_ev({"site_id": b}, id=wid), None))
     assert rec["site_id"] == b and rec["yard"] == "ZUM"
-    rec = _ok(w_update.handler(_ev({"site_id": None}, id=wid), None))
-    assert rec["site_id"] is None and rec["yard"] == ""
+    assert w_update.handler(_ev({"site_id": None}, id=wid), None)["statusCode"] == 422
+    assert db.fila("warehouses", wid)["site_id"] == b
     # Sin site_id en el cuerpo no se toca la sede.
     rec = _ok(w_update.handler(_ev({"type": "scrap"}, id=wid), None))
-    assert rec["site_id"] is None and rec["type"] == "scrap"
+    assert rec["site_id"] == b and rec["type"] == "scrap"
 
 
 def test_almacen_no_se_mueve_a_sede_de_otra_compania(db):
@@ -332,7 +349,7 @@ def test_asignar_llantas_sensores_y_qbox(db):
                               "tbox_ids": [30]}), None))
     for tabla, rid in (("tires", 10), ("sensors", 20), ("tboxes", 30)):
         assert db.fila(tabla, rid)["warehouse_id"] == wid
-    w = _ok(s_list.handler(_ev(company_id=8), None))["unassigned_warehouses"][0]
+    w = _ok(s_list.handler(_ev(company_id=8), None))["sites"][0]["warehouses"][0]
     assert (w["tire_count"], w["sensor_count"], w["tbox_count"]) == (1, 1, 1)
 
 

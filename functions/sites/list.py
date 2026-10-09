@@ -12,7 +12,6 @@ def handler(event, context):
     # GET /sites?company_id=.. -> sedes con sus almacenes y cuántos activos tiene
     # cada uno, todo en una respuesta para la pantalla de sedes y almacenes.
     # La compañía admin (o sin company_id) ve las de todas; las demás, las suyas.
-    # Los almacenes sin sede van aparte, en `unassigned_warehouses`.
     qs = event.get("queryStringParameters") or {}
     filtros: dict = {}
     if qs.get("company_id"):
@@ -39,21 +38,17 @@ def handler(event, context):
         return error(500, f"DB error (list sites): {e}")
 
     por_sede: dict = {}
-    sueltos = []
     for w in sorted(almacenes, key=lambda w: (w["name"] or "").lower()):
         w["tire_count"] = llantas.get(w["id"], 0)
         w["sensor_count"] = sensores.get(w["id"], 0)
         w["tbox_count"] = qbox.get(w["id"], 0)
-        if w.get("site_id"):
-            por_sede.setdefault(w["site_id"], []).append(w)
-        else:
-            sueltos.append(w)
+        por_sede.setdefault(w["site_id"], []).append(w)
 
     for s in sedes:
         s["unit_count"] = unidades.get(s["id"], 0)
         s["warehouses"] = por_sede.get(s["id"], [])
     sedes.sort(key=lambda s: (s["company_id"], (s["name"] or "").lower()))
-    return ok({"sites": sedes, "unassigned_warehouses": sueltos})
+    return ok({"sites": sedes})
 
 
 def _contar(db, tabla: str, columna: str, ids: list) -> dict:

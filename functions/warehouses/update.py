@@ -15,7 +15,7 @@ from shared.utils.response import error, ok
 class UpdateWarehouseRequest(BaseModel):
     name: str | None = None
     type: Literal["general", "scrap", "retreading"] | None = None
-    # Mandar site_id: null saca el almacén de su sede; no mandarlo lo deja igual.
+    # No mandarlo deja la sede igual. Un almacén siempre tiene sede: null es 422.
     site_id: int | None = None
 
     @field_validator("name")
@@ -47,14 +47,14 @@ def handler(event, context):
         cambios["name"] = body.name
     if body.type is not None and body.type != alm.get("type"):
         cambios["type"] = body.type
-    if "site_id" in body.model_fields_set and body.site_id != alm.get("site_id"):
-        sede = None
-        if body.site_id is not None:
-            sede = get_by_id(db, t("sites"), body.site_id)
-            if not sede or sede["company_id"] != alm["company_id"]:
-                return error(422, "La sede no existe en la compañía del almacén")
+    if "site_id" in body.model_fields_set and body.site_id is None:
+        return error(422, "Un almacén no puede quedar sin sede")
+    if body.site_id is not None and body.site_id != alm.get("site_id"):
+        sede = get_by_id(db, t("sites"), body.site_id)
+        if not sede or sede["company_id"] != alm["company_id"]:
+            return error(422, "La sede no existe en la compañía del almacén")
         cambios["site_id"] = body.site_id
-        cambios["yard"] = sede["name"] if sede else ""
+        cambios["yard"] = sede["name"]
     if not cambios:
         return ok(alm)
 
