@@ -54,7 +54,6 @@ def handler(event, context):
         if not sede or sede["company_id"] != alm["company_id"]:
             return error(422, "La sede no existe en la compañía del almacén")
         cambios["site_id"] = body.site_id
-        cambios["yard"] = sede["name"]
     if not cambios:
         return ok(alm)
 

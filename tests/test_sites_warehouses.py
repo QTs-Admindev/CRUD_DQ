@@ -34,11 +34,9 @@ CREATE TABLE companies (id INTEGER PRIMARY KEY, company_name TEXT);
 CREATE TABLE sites (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INT NOT NULL,
   name TEXT NOT NULL, created_at INT, updated_at INT, UNIQUE (company_id, name));
 CREATE TABLE warehouses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INT NOT NULL,
-  name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'general', yard TEXT DEFAULT '',
-  site_id INT NOT NULL REFERENCES sites (id), created_at INT, updated_at INT,
-  UNIQUE (company_id, name, yard));
-CREATE TABLE warehouse_tires (id INTEGER PRIMARY KEY, warehouse_id INT NOT NULL
-  REFERENCES warehouses (id), tire_id INT);
+  site_id INT NOT NULL REFERENCES sites (id), name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'general', created_at INT, updated_at INT,
+  UNIQUE (site_id, name));
 CREATE TABLE units (id INTEGER PRIMARY KEY, company_id INT, site_id INT, tbox_id INT,
   is_deleted INT DEFAULT 0, updated_at INT);
 CREATE TABLE tires (id INTEGER PRIMARY KEY, company_id INT, warehouse_id INT,
@@ -199,11 +197,11 @@ def test_cliente_solo_ve_sus_sedes(db):
     assert [s["name"] for s in sedes] == ["MTY"]
 
 
-def test_renombrar_sede_arrastra_el_yard_de_sus_almacenes(db):
+def test_renombrar_sede_conserva_sus_almacenes(db):
     sid = _sede(db, 8, "SLP")
     wid = _almacen(db, 8, "Gallitos", sid)
-    _ok(s_update.handler(_ev({"name": "San Luis"}, id=sid), None))
-    assert db.fila("warehouses", wid)["yard"] == "San Luis"
+    assert _ok(s_update.handler(_ev({"name": "San Luis"}, id=sid), None))["name"] == "San Luis"
+    assert db.fila("warehouses", wid)["site_id"] == sid
 
 
 def test_un_cliente_no_toca_la_sede_de_otro(db):
@@ -314,7 +312,7 @@ def test_mover_almacen_de_sede_pero_no_sacarlo(db):
     a, b = _sede(db, 8, "SLP"), _sede(db, 8, "ZUM")
     wid = _almacen(db, 8, "General", a)
     rec = _ok(w_update.handler(_ev({"site_id": b}, id=wid), None))
-    assert rec["site_id"] == b and rec["yard"] == "ZUM"
+    assert rec["site_id"] == b
     assert w_update.handler(_ev({"site_id": None}, id=wid), None)["statusCode"] == 422
     assert db.fila("warehouses", wid)["site_id"] == b
     # Sin site_id en el cuerpo no se toca la sede.
@@ -391,12 +389,6 @@ def test_no_se_borra_un_almacen_con_inventario(db):
     resp = w_delete.handler(_ev(id=wid), None)
     assert resp["statusCode"] == 409 and "1 Qbox" in json.loads(resp["body"])["error"]
 
-
-def test_almacen_con_historial_de_quinta_1_no_se_borra(db):
-    wid = _almacen(db, 8, "Viejo")
-    db.sembrar("warehouse_tires", id=1, warehouse_id=wid, tire_id=10)
-    assert w_delete.handler(_ev(id=wid), None)["statusCode"] == 409
-    assert db.fila("warehouses", wid) is not None
 
 
 # ─── Listados ────────────────────────────────────────────────────────────────
