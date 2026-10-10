@@ -42,9 +42,6 @@ def handler(event, context):
         db.commit()
     except Exception as e:
         db.rollback()
-        # 1451: lo referencia `warehouse_tires`, el historial de Quinta 1.
-        if getattr(e, "args", None) and e.args[0] == 1451:
-            return error(409, "El almacén tiene historial de Quinta 1 y no se puede borrar")
         return error(500, f"DB error (borrar almacén): {e}")
 
     audit(db, event, context, action="delete", asset_type="warehouse", asset_id=wid,
