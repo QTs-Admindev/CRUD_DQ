@@ -17,7 +17,7 @@ from shared.config import ADMIN_COMPANY_ID
 
 NOMBRE_MAX = 120
 
-# warehouses.type es un ENUM heredado de Quinta 1.
+# Valores del ENUM warehouses.type.
 TIPOS_ALMACEN = ("general", "scrap", "retreading")
 
 # Activos que se guardan en un almacén: recurso del cuerpo -> tabla.

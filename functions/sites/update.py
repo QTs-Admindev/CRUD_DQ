@@ -42,10 +42,6 @@ def handler(event, context):
 
     try:
         rec = update(db, t("sites"), site_id, {"name": body.name, "updated_at": now_ms()})
-        # `yard` de sus almacenes acompaña al nombre de la sede (ver la migración).
-        with db.cursor() as cur:
-            cur.execute(f"UPDATE {t('warehouses')} SET yard = %s, updated_at = %s "
-                        f"WHERE site_id = %s", [body.name, now_ms(), site_id])
         db.commit()
     except Exception as e:
         db.rollback()

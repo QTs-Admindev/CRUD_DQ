@@ -44,8 +44,6 @@ def handler(event, context):
         rec = insert(db, t("warehouses"), {
             "company_id": body.company_id, "name": body.name, "type": body.type,
             "site_id": body.site_id,
-            # `yard` es la sede en texto (Quinta 1) y parte del UNIQUE del nombre.
-            "yard": sede["name"],
             "created_at": ts, "updated_at": ts,
         })
         db.commit()
