@@ -176,6 +176,13 @@ def test_la_admin_crea_sedes_propias_y_de_otras_companias(db):
     assert len(_ok(s_list.handler(_ev(company_id=2), None))["sites"]) == 2
 
 
+def test_quintaapp_no_maneja_sedes(db):
+    db.sembrar("companies", id=1, company_name="QuintaApp")
+    resp = s_create.handler(_ev({"company_id": 1, "name": "Planta"}), None)
+    assert resp["statusCode"] == 422
+    assert _ok(s_list.handler(_ev(company_id=2), None))["sites"] == []
+
+
 def test_sede_repetida_en_la_misma_compania_es_409(db):
     _sede(db, 8, "SLP")
     resp = s_create.handler(_ev({"company_id": 8, "name": "SLP"}), None)

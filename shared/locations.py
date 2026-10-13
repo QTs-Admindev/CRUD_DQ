@@ -25,6 +25,9 @@ ACTIVOS_DE_ALMACEN = {"tire_ids": "tires", "sensor_ids": "sensors", "tbox_ids": 
 
 MAX_POR_ASIGNACION = 500
 
+# QuintaApp (Quinta 1) no maneja sedes ni almacenes.
+COMPANIAS_SIN_SEDES = {1}
+
 
 def limpiar_nombre(valor) -> str:
     """Nombre de sede o almacén: sin espacios sobrantes, no vacío, con tope."""
