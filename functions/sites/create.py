@@ -6,7 +6,7 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, insert
-from shared.locations import es_duplicado, limpiar_nombre
+from shared.locations import COMPANIAS_SIN_SEDES, es_duplicado, limpiar_nombre
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
@@ -29,6 +29,9 @@ def handler(event, context):
         body = CreateSiteRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
         return error(422, e.errors())
+
+    if body.company_id in COMPANIAS_SIN_SEDES:
+        return error(422, "Esta compañía no maneja sedes")
 
     db = get_db()
     if not get_by_id(db, "companies", body.company_id):
