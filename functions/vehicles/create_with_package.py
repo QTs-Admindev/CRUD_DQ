@@ -5,13 +5,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where
-from shared.utils.response import error, ok, pending
+from shared.utils.response import error, pending
 
 from functions.packages.layout import tire_slots
 # Reusamos EXACTO el alta de unidad y la asignación de paquete. Referencias a
 # nivel módulo para poder mockearlas en tests.
 from functions.vehicles.create import handler as vehicle_create_handler
-from functions.packages.assign import handler as package_assign_handler
+from functions.packages.assign import start_assign
 
 
 class CreateVehicleWithPackageRequest(BaseModel):
@@ -40,7 +40,8 @@ def handler(event, context):
     # 1. Valida el paquete ANTES de crear nada: listo (prepared), del mismo tipo de
     #    unidad, en la misma compañía y con los sensores completos. Así no queda una
     #    unidad creada con un paquete que no le corresponde.
-    # 2. Crea la unidad (vehicles/create) y le asigna el paquete (packages/assign).
+    # 2. Crea la unidad (vehicles/create) y lanza la asignación del paquete en segundo
+    #    plano (202 con assigning=true); el FE sigue el avance en GET /packages/{id}.
     # Si la unidad queda pendiente de sincronizar (202), el paquete no se puede
     # asignar todavía: se avisa y se asigna después desde la tabla.
     try:
@@ -79,14 +80,16 @@ def handler(event, context):
         return vresp  # 409/422/5xx del alta de la unidad, tal cual
     unidad = _body(vresp)
 
-    aresp = package_assign_handler(
-        {"pathParameters": {"id": str(body.package_id)},
-         "body": json.dumps({"unit_id": unidad.get("id")}), "headers": headers}, context)
-    if aresp["statusCode"] == 200:
-        return ok({"unit": unidad, "assigned": True, "package": _body(aresp)})
+    aresp = start_assign(db, event, body.package_id, unidad.get("id"))
+    if aresp["statusCode"] == 202:
+        paquete = _body(aresp).get("data")
+        return pending({"unit": unidad, "assigned": False,
+                        "assigning": (paquete or {}).get("status") == "assigning",
+                        "package": paquete,
+                        "reason": (paquete or {}).get("assign_error")})
     # La unidad ya existe: no se revierte. Se informa para reintentar la asignación.
     detalle = _body(aresp)
-    return pending({"unit": unidad, "assigned": False,
+    return pending({"unit": unidad, "assigned": False, "assigning": False,
                     "reason": detalle.get("error") if isinstance(detalle, dict) and detalle.get("error")
                     else "El paquete no se pudo asignar; reintenta desde la tabla",
                     "assign_status": aresp["statusCode"]})

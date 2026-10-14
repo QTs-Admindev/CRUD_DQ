@@ -1,9 +1,10 @@
 import json
 import os
 
+import boto3
 from pydantic import BaseModel, ValidationError
 
-from shared.audit import audit
+from shared.audit import actor_from, audit
 from shared.generic_tire import resolve_generic_catalog_id
 from shared.config import t
 from shared.db.connection import get_db
@@ -44,8 +45,107 @@ def _audit_partial(db, event, context, pkg, pid, company_id, stage, pos, done, t
                    "reason": reason})
 
 
+ASSIGNABLE = ("prepared", "assign_failed")
+
+
+def _load(db, pid, unit_id, statuses):
+    """Valida paquete, unidad y layout. Devuelve (pkg, unit, slots) o una respuesta de error."""
+    pkg = get_by_id(db, t("packages"), pid)
+    if not pkg:
+        return error(404, "Paquete no encontrado")
+    if pkg.get("status") not in statuses:
+        return error(409, f"El paquete no se puede asignar (status={pkg.get('status')})")
+    if pkg.get("status") == "assign_failed" and pkg.get("unit_id") not in (None, unit_id):
+        return error(409, "El paquete quedó a medias en otra unidad; reintenta en esa unidad")
+
+    unit = get_by_id(db, t("units"), unit_id)
+    if not unit:
+        return error(404, "Unidad no encontrada")
+    if unit.get("unit_catalog_id") != pkg.get("unit_catalog_id"):
+        return error(422, "El tipo de la unidad no coincide con el del paquete")
+
+    catalog = get_by_id(db, "unit_catalog", pkg.get("unit_catalog_id"))
+    if not catalog:
+        return error(422, "unit_catalog del paquete no encontrado")
+    return pkg, unit, tire_slots(catalog)
+
+
+def _claim(db, pid, unit_id, total):
+    """Pasa el paquete a 'assigning' solo si sigue asignable. False si otro ya lo tomó."""
+    with db.cursor() as cur:
+        n = cur.execute(
+            f"UPDATE {t('packages')} SET status = 'assigning', unit_id = %s, assign_done = 0, "
+            "assign_total = %s, assign_error = NULL, updated_at = %s "
+            "WHERE id = %s AND status IN ('prepared', 'assign_failed')",
+            [unit_id, total, now_ms(), pid])
+    db.commit()
+    return n == 1
+
+
+def _invoke_worker(pid, unit_id, actor):
+    fn = os.environ.get("ASSIGN_WORKER_FUNCTION")
+    if not fn:
+        return False
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=fn,
+            InvocationType="Event",
+            Payload=json.dumps({"package_id": pid, "unit_id": unit_id, "actor": actor}).encode(),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def mark_failed(db, pid, reason):
+    try:
+        update(db, t("packages"), pid, {
+            "status": "assign_failed", "assign_error": str(reason)[:500], "updated_at": now_ms(),
+        })
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def start_assign(db, event, pid, unit_id):
+    """Valida, marca el paquete como 'assigning' y lanza el worker. La API no espera
+    el montaje: con 6 a 10 llantas pasa del límite de 29 s de API Gateway."""
+    loaded = _load(db, pid, unit_id, ASSIGNABLE)
+    if isinstance(loaded, dict):
+        return loaded
+    pkg, unit, slots = loaded
+    sensors = get_where(db, t("sensors"), "package_id = %s", [pid], 500)
+    if len(sensors) < len(slots):
+        return error(422, f"El paquete tiene {len(sensors)} sensores; el layout requiere {len(slots)}")
+
+    try:
+        claimed = _claim(db, pid, unit_id, len(slots))
+    except Exception as e:
+        db.rollback()
+        return error(500, f"DB error (asignar paquete): {e}")
+    if not claimed:
+        return error(409, "El paquete ya se está asignando")
+
+    if not _invoke_worker(pid, unit_id, actor_from(event)):
+        mark_failed(db, pid, "No se pudo iniciar la asignación; reintenta")
+    return pending(get_by_id(db, t("packages"), pid))
+
+
 def handler(event, context):
-    # POST /packages/{id}/assign -> monta el paquete en una unidad real: por cada
+    # POST /packages/{id}/assign -> 202 de inmediato; el montaje corre en assign_worker.
+    try:
+        pid = int((event.get("pathParameters") or {})["id"])
+    except (KeyError, TypeError, ValueError):
+        return error(400, "id de paquete inválido")
+    try:
+        body = AssignPackageRequest.model_validate(json.loads(event.get("body") or "{}"))
+    except ValidationError as e:
+        return error(422, e.errors())
+    return start_assign(get_db(), event, pid, body.unit_id)
+
+
+def assign_now(event, context, on_progress=None):
+    # Monta el paquete en una unidad real: por cada
     # posición del layout reutiliza la llanta ya montada o crea una genérica, ata
     # sensor[i]->llanta[i] y finalmente ata el tbox a la unidad.
     try:
@@ -58,22 +158,10 @@ def handler(event, context):
         return error(422, e.errors())
 
     db = get_db()
-    pkg = get_by_id(db, t("packages"), pid)
-    if not pkg:
-        return error(404, "Paquete no encontrado")
-    if pkg.get("status") != "prepared":
-        return error(409, f"El paquete no se puede asignar (status={pkg.get('status')})")
-
-    unit = get_by_id(db, t("units"), body.unit_id)
-    if not unit:
-        return error(404, "Unidad no encontrada")
-    if unit.get("unit_catalog_id") != pkg.get("unit_catalog_id"):
-        return error(422, "El tipo de la unidad no coincide con el del paquete")
-
-    catalog = get_by_id(db, "unit_catalog", pkg.get("unit_catalog_id"))
-    if not catalog:
-        return error(422, "unit_catalog del paquete no encontrado")
-    slots = tire_slots(catalog)
+    loaded = _load(db, pid, body.unit_id, ASSIGNABLE + ("assigning",))
+    if isinstance(loaded, dict):
+        return loaded
+    pkg, unit, slots = loaded
 
     # Miembros del paquete.
     # Un paquete puede no tener tbox (lote: solo sensores, para tipos no motrices
@@ -164,6 +252,8 @@ def handler(event, context):
                 return sresp
 
         done += 1  # esta posición quedó completa
+        if on_progress:
+            on_progress(done, total)
 
     # d) Atar el tbox a la unidad. Solo si el paquete tiene tbox; un lote (sin tbox)
     #    solo monta llantas + sensores y se salta este paso.
@@ -182,7 +272,8 @@ def handler(event, context):
     #    sobre la unidad en la plataforma; el paquete ya no se puede recuperar.
     try:
         update(db, t("packages"), pid, {
-            "status": "assigned", "unit_id": body.unit_id, "updated_at": now_ms(),
+            "status": "assigned", "unit_id": body.unit_id, "assign_done": total,
+            "assign_error": None, "updated_at": now_ms(),
         })
         db.commit()
     except Exception as e:

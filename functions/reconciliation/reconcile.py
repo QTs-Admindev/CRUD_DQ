@@ -64,8 +64,13 @@ ASSETS = [
 ]
 
 
+# Más que el timeout del worker (900 s): si sigue en 'assigning', el worker murió.
+ASSIGN_STALE_MS = 20 * 60_000
+
+
 def handler(event, context):
     db = get_db()
+    _sweep_stale_assigning(db)
     try:
         st = SmartTyreClient()
     except Exception as e:
@@ -104,6 +109,23 @@ def handler(event, context):
         pass
 
     return {"status": "ok", **summary}
+
+
+def _sweep_stale_assigning(db):
+    """Paquetes atorados en 'assigning' pasan a 'assign_failed' para que el FE
+    ofrezca reintentar. No se relanzan solos: dos workers sobre el mismo paquete
+    competirían por las mismas llantas."""
+    try:
+        rows = get_where(db, t("packages"), "status = 'assigning' AND updated_at < %s",
+                         [now_ms() - ASSIGN_STALE_MS], BATCH)
+        for r in rows:
+            update(db, t("packages"), r["id"], {
+                "status": "assign_failed", "updated_at": now_ms(),
+                "assign_error": "La asignación se interrumpió; reintenta",
+            })
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _sweep_registering(db, st, table, cfg, summary):

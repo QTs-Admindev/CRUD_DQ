@@ -40,12 +40,12 @@ def wire(monkeypatch):
             calls["create"].append(json.loads(ev["body"]))
             return create_resp or _resp(200, {"id": 77, "unit_identifier": "T-12"})
 
-        def fake_assign(ev, ctx):
-            calls["assign"].append((ev["pathParameters"]["id"], json.loads(ev["body"])))
-            return assign_resp or _resp(200, {"id": 5, "status": "assigned"})
+        def fake_start(db, ev, pid, unit_id):
+            calls["assign"].append((pid, unit_id))
+            return assign_resp or _resp(202, {"data": {"id": 5, "status": "assigning"}})
 
         monkeypatch.setattr(mod, "vehicle_create_handler", fake_create)
-        monkeypatch.setattr(mod, "package_assign_handler", fake_assign)
+        monkeypatch.setattr(mod, "start_assign", fake_start)
         return store, calls
 
     return setup
@@ -58,15 +58,23 @@ def _post(**over):
     return mod.handler({"body": json.dumps({**BODY, **over}), "headers": {}}, None)
 
 
-def test_crea_la_unidad_y_le_asigna_el_paquete(wire):
+def test_crea_la_unidad_y_lanza_la_asignacion(wire):
     store, calls = wire()
     resp = _post()
-    assert resp["statusCode"] == 200
-    data = json.loads(resp["body"])
-    assert data["assigned"] is True and data["unit"]["id"] == 77
+    assert resp["statusCode"] == 202
+    data = json.loads(resp["body"])["data"]
+    assert data["assigning"] is True and data["unit"]["id"] == 77
+    assert data["package"]["status"] == "assigning"
     # la unidad se crea sin Qbox suelto y el paquete se asigna a la unidad creada
     assert "package_id" not in calls["create"][0] and "tbox_id" not in calls["create"][0]
-    assert calls["assign"] == [("5", {"unit_id": 77})]
+    assert calls["assign"] == [(5, 77)]
+
+
+def test_no_se_pudo_lanzar_el_worker(wire):
+    store, calls = wire(assign_resp=_resp(202, {"data": {
+        "id": 5, "status": "assign_failed", "assign_error": "No se pudo iniciar"}}))
+    data = json.loads(_post()["body"])["data"]
+    assert data["assigning"] is False and data["reason"] == "No se pudo iniciar"
 
 
 @pytest.mark.parametrize("mut,code", [
@@ -107,5 +115,6 @@ def test_falla_la_asignacion_avisa_sin_borrar_la_unidad(wire):
     resp = _post()
     assert resp["statusCode"] == 202
     data = json.loads(resp["body"])["data"]
-    assert data["assigned"] is False and data["unit"]["id"] == 77
+    assert data["assigned"] is False and data["assigning"] is False
+    assert data["unit"]["id"] == 77
     assert "sensores" in data["reason"]
