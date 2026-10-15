@@ -118,3 +118,20 @@ def test_falla_la_asignacion_avisa_sin_borrar_la_unidad(wire):
     assert data["assigned"] is False and data["assigning"] is False
     assert data["unit"]["id"] == 77
     assert "sensores" in data["reason"]
+
+
+def test_sin_asignar_crea_solo_la_unidad(wire):
+    store, calls = wire()
+    resp = _post(assign=False)
+    assert resp["statusCode"] == 200
+    data = json.loads(resp["body"])
+    assert data["deferred"] is True and data["unit"]["id"] == 77
+    assert "assign" not in calls["create"][0]
+    assert calls["assign"] == []
+
+
+def test_sin_asignar_igual_valida_el_paquete(wire):
+    store, calls = wire()
+    store.packages[5]["status"] = "assigned"
+    assert _post(assign=False)["statusCode"] == 409
+    assert calls["create"] == []
