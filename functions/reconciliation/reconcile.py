@@ -71,6 +71,7 @@ ASSIGN_STALE_MS = 20 * 60_000
 def handler(event, context):
     db = get_db()
     _sweep_stale_assigning(db)
+    _sweep_stale_deleting(db)
     try:
         st = SmartTyreClient()
     except Exception as e:
@@ -122,6 +123,23 @@ def _sweep_stale_assigning(db):
             update(db, t("packages"), r["id"], {
                 "status": "assign_failed", "updated_at": now_ms(),
                 "assign_error": "La asignación se interrumpió; reintenta",
+            })
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _sweep_stale_deleting(db):
+    """Unidades atoradas en borrado (worker muerto): se libera la marca y se deja el
+    motivo para que el FE ofrezca reintentar."""
+    try:
+        rows = get_where(db, t("units"),
+                         "deleting_at IS NOT NULL AND deleting_at < %s AND (is_deleted IS NULL OR is_deleted = 0)",
+                         [now_ms() - ASSIGN_STALE_MS], BATCH)
+        for r in rows:
+            update(db, t("units"), r["id"], {
+                "deleting_at": None, "updated_at": now_ms(),
+                "delete_error": "El borrado se interrumpió; reintenta",
             })
         db.commit()
     except Exception:
