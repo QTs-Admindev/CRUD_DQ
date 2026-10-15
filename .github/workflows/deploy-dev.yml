@@ -41,6 +41,13 @@ jobs:
         # CUTOVER 2026-07-06: dev apunta a las tablas REALES (units, tires, sensors,
         # tboxes), ya no a los clones test_. Sin TABLE_PREFIX = sin prefijo (serverless.yml
         # lo default-ea a '' vía ${env:TABLE_PREFIX, ''}).
+        # Aviso por WhatsApp de las alarmas de GPSHook: apagado mientras la variable
+        # SOCKETS_NOTIFY_ENABLED del repo no valga 'true'.
+        env:
+          SOCKETS_NOTIFY_ENABLED: ${{ vars.SOCKETS_NOTIFY_ENABLED }}
+          SOCKETS_WHATSAPP_RECIPIENTS: ${{ secrets.SOCKETS_WHATSAPP_RECIPIENTS }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
         run: serverless deploy --stage dev --verbose
 
       - name: Display endpoints

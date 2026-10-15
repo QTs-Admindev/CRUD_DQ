@@ -528,8 +528,210 @@ functions:
           rate: rate(15 minutes)
           enabled: true
 
+  # Aviso por WhatsApp de las alarmas del monitor de GPSHook (sockets, cola,
+  # workers, bases). Se enciende aparte del resto de avisos del CRUD.
+  socketsAlarm:
+    handler: functions/monitoring/sockets_alarm.handler
+    timeout: 30
+    environment:
+      NOTIFY_ENABLED: ${env:SOCKETS_NOTIFY_ENABLED, 'false'}
+      WHATSAPP_RECIPIENTS: ${env:SOCKETS_WHATSAPP_RECIPIENTS, env:WHATSAPP_RECIPIENTS, ''}
+    events:
+      - sns:
+          arn: !Ref SocketsAlarmTopic
+          topicName: quinta-sockets-alarms-${sls:stage}
+
 resources:
+  # Las alarmas solo en dev: es el stage que sirve a producción y GPSHook es uno solo.
+  Conditions:
+    SocketAlarmsOn: !Equals ['${sls:stage}', 'dev']
   Resources:
+    SocketsAlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: quinta-sockets-alarms-${sls:stage}
+    MonitorCaido:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-MonitorCaido-${sls:stage}
+        AlarmDescription: "El monitor de GPSHook dejó de reportar: EC2, GPSHook o el monitor caídos"
+        Namespace: Quinta/GPSHook
+        MetricName: Heartbeat
+        Statistic: SampleCount
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 5
+        Threshold: 1
+        ComparisonOperator: LessThanThreshold
+        TreatMissingData: breaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    SinDatosGps:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-SinDatosGps-${sls:stage}
+        AlarmDescription: "Sockets: no llegan datos de GPS"
+        Namespace: Quinta/GPSHook
+        MetricName: IngestLagSeconds
+        Dimensions:
+          - Name: Topic
+            Value: ridelogs
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: ${self:custom.socketAlarms.gpsSilenceS}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    SinDatosSensores:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-SinDatosSensores-${sls:stage}
+        AlarmDescription: "Sockets: no llegan datos de sensores"
+        Namespace: Quinta/GPSHook
+        MetricName: IngestLagSeconds
+        Dimensions:
+          - Name: Topic
+            Value: sensors
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: ${self:custom.socketAlarms.sensorSilenceS}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    SinDatosCarga:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-SinDatosCarga-${sls:stage}
+        AlarmDescription: "Sockets: no llegan datos de profundidad (load)"
+        Namespace: Quinta/GPSHook
+        MetricName: IngestLagSeconds
+        Dimensions:
+          - Name: Topic
+            Value: loads
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: ${self:custom.socketAlarms.loadSilenceS}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    ColaAtorada:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-ColaAtorada-${sls:stage}
+        AlarmDescription: "Cola de procesamiento atorada: mensajes pendientes sin drenar"
+        Namespace: Quinta/GPSHook
+        MetricName: StreamPending
+        Statistic: Minimum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 5
+        Threshold: ${self:custom.socketAlarms.pendingMax}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    WorkerAtascado:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-WorkerAtascado-${sls:stage}
+        AlarmDescription: "Un worker de GPSHook está atascado con mensajes pendientes"
+        Namespace: Quinta/GPSHook
+        MetricName: WedgedConsumers
+        Statistic: Minimum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 5
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    SinWorkers:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-SinWorkers-${sls:stage}
+        AlarmDescription: "Ningún worker de GPSHook está procesando"
+        Namespace: Quinta/GPSHook
+        MetricName: WorkersReporting
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: LessThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    TareasCaidas:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-TareasCaidas-${sls:stage}
+        AlarmDescription: "Una tarea de fondo de GPSHook (vigías, autoscaler, broadcast) dejó de latir"
+        Namespace: Quinta/GPSHook
+        MetricName: TasksUnhealthy
+        Statistic: Minimum
+        Period: 60
+        EvaluationPeriods: 10
+        DatapointsToAlarm: 10
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    BaseCaida:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-BaseCaida-${sls:stage}
+        AlarmDescription: "GPSHook no alcanza Redis, MySQL, Mongo u OpenSearch"
+        Namespace: Quinta/GPSHook
+        MetricName: StoresDown
+        Statistic: Minimum
+        Period: 60
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
+    BuscadorAtrasado:
+      Type: AWS::CloudWatch::Alarm
+      Condition: SocketAlarmsOn
+      Properties:
+        AlarmName: gpshook-BuscadorAtrasado-${sls:stage}
+        AlarmDescription: "El buscador (OpenSearch) va atrasado respecto a Mongo"
+        Namespace: Quinta/GPSHook
+        MetricName: IndexLagSeconds
+        Dimensions:
+          - Name: Topic
+            Value: ridelogs
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 2
+        DatapointsToAlarm: 2
+        Threshold: 900
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions: [!Ref SocketsAlarmTopic]
+        OKActions: [!Ref SocketsAlarmTopic]
     # Los errores que genera API Gateway (504 por timeout, 502, 403) no pasan por la
     # Lambda y salían sin CORS: el navegador solo mostraba "Failed to fetch".
     GatewayResponseDefault4XX:
@@ -553,6 +755,12 @@ plugins:
   - serverless-python-requirements
 
 custom:
+  # Umbrales de las alarmas de GPSHook. Provisionales hasta medir el tráfico real.
+  socketAlarms:
+    gpsSilenceS: ${env:SOCKETS_GPS_SILENCE_S, 900}
+    sensorSilenceS: ${env:SOCKETS_SENSOR_SILENCE_S, 1800}
+    loadSilenceS: ${env:SOCKETS_LOAD_SILENCE_S, 3600}
+    pendingMax: ${env:SOCKETS_PENDING_MAX, 500}
   # CORS de todas las rutas. Es el default de `cors: true` más X-Actor, la cabecera
   # con el correo de quien opera que alimenta asset_audit_log (shared/audit.py).
   # Sin ella en la lista, el navegador bloquea cualquier petición que la mande.
