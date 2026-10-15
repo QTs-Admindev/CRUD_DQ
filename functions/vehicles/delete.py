@@ -1,5 +1,10 @@
+import json
+import os
+
+import boto3
+
 from shared.activation import liberar_llave_natural, llave_original
-from shared.audit import audit
+from shared.audit import actor_from, audit
 from shared.config import DAJIN_ORG_ID, GPSHOOK_URL, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, soft_delete, update
@@ -23,8 +28,72 @@ def _purge_gpshook_footprint(unit_id: int) -> None:
         pass
 
 
+# Más que el timeout del worker (900 s): pasado esto, un 'deleting_at' es de un worker muerto.
+DELETE_STALE_MS = 20 * 60_000
+
+
+def _invoke_worker(rid, actor):
+    fn = os.environ.get("DELETE_WORKER_FUNCTION")
+    if not fn:
+        return False
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=fn,
+            InvocationType="Event",
+            Payload=json.dumps({"unit_id": rid, "actor": actor}).encode(),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _claim(db, rid):
+    now = now_ms()
+    with db.cursor() as cur:
+        n = cur.execute(
+            f"UPDATE {t('units')} SET deleting_at = %s, delete_error = NULL, updated_at = %s "
+            "WHERE id = %s AND (is_deleted IS NULL OR is_deleted = 0) "
+            "AND (deleting_at IS NULL OR deleting_at < %s)",
+            [now, now, rid, now - DELETE_STALE_MS])
+    db.commit()
+    return n == 1
+
+
 def handler(event, context):
-    # DELETE /vehicles/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
+    # DELETE /vehicles/{id} -> 202 de inmediato; el borrado corre en delete_worker. Con
+    # muchas llantas son decenas de llamadas a la plataforma y pasa de los 29 s.
+    try:
+        rid = int((event.get("pathParameters") or {})["id"])
+    except (KeyError, TypeError, ValueError):
+        return error(400, "id de vehículo inválido")
+
+    db = get_db()
+    rec = get_by_id(db, t("units"), rid)
+    if not rec:
+        return error(404, "Vehículo no encontrado")
+    if rec.get("is_deleted"):
+        return ok(rec)
+
+    try:
+        claimed = _claim(db, rid)
+    except Exception as e:
+        db.rollback()
+        return error(500, f"DB error (borrar vehículo): {e}")
+    if not claimed:
+        return pending_delete(get_by_id(db, t("units"), rid), "El borrado ya está en curso")
+
+    if not _invoke_worker(rid, actor_from(event)):
+        try:
+            update(db, t("units"), rid, {"deleting_at": None, "updated_at": now_ms()})
+            db.commit()
+        except Exception:
+            db.rollback()
+        return error(503, "No se pudo iniciar el borrado; intenta de nuevo")
+    return pending_delete(get_by_id(db, t("units"), rid))
+
+
+def delete_now(event, context):
+    # La plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

@@ -39,6 +39,7 @@ provider:
             - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
             - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-tboxesBulkSyncWorker
             - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-assignPackageWorker
+            - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-deleteVehicleWorker
 
 package:
   patterns:
@@ -181,11 +182,19 @@ functions:
 
   deleteVehicle:
     handler: functions/vehicles/delete.handler
+    environment:
+      DELETE_WORKER_FUNCTION: ${self:service}-${sls:stage}-deleteVehicleWorker
     events:
       - http:
           path: /vehicles/{id}
           method: delete
           cors: ${self:custom.cors}
+
+  # Borra la unidad fuera de API Gateway. Sin reintentos de AWS: reintenta adentro.
+  deleteVehicleWorker:
+    handler: functions/vehicles/delete_worker.handler
+    timeout: 900
+    maximumRetryAttempts: 0
 
   deleteTire:
     handler: functions/tires/delete.handler

@@ -30,7 +30,7 @@ RESOURCES = {
     "units": {
         "columns": ("id, unit_identifier, company_id, daijin_id, status, tbox_id, "
                     "unit_catalog_id, vin, plates, mileage, site_id, "
-                    "created_at, updated_at"),
+                    "deleting_at, delete_error, created_at, updated_at"),
         "prefixed": True, "soft": True, "by_company": True,
     },
     "tires": {

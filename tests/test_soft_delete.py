@@ -108,7 +108,7 @@ def test_vehicle_delete_dajin_ok(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["is_deleted"] == 1
     assert store.rows[1]["daijin_id"] is None        # cerrado
@@ -126,7 +126,7 @@ def test_vehicle_delete_cascade_unbinds_tire_sensor(monkeypatch):
     store.rows[42] = {"id": 42, "sensorCode": "A4C1388A0005"}
     remote = FakeRemote((DONE, None))
     st = _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     # primero desvinculó el sensor (con vehicleId + sensorCode), luego desmontó la llanta
     assert ("/smartyre/openapi/tyre/sensor/unbind", {
@@ -143,7 +143,7 @@ def test_vehicle_delete_without_daijin_skips_remote(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": None}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["is_deleted"] == 1
     assert remote.calls == []                          # no se tocó Dajin
@@ -154,7 +154,7 @@ def test_vehicle_delete_dajin_guard_aborts(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((GUARD, "轮胎已绑定传感器"))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 409
     assert store.rows[1]["is_deleted"] == 0            # intacto
     assert store.soft_deleted == [] and store.updated == []
@@ -165,7 +165,7 @@ def test_vehicle_delete_transient_pending(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((TRANSIENT, "timeout"))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 202
     assert store.rows[1]["is_deleted"] == 1
     assert store.rows[1]["daijin_id"] == "33"          # se conserva -> reconciliación
@@ -182,7 +182,7 @@ def test_vehicle_delete_unmounts_mounted_tires(monkeypatch):
     store.mounted = [store.rows[10]]
     remote = FakeRemote((DONE, None))
     st = _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     # unbind remoto de la llanta + desmontaje local, ANTES del borrado remoto
     assert ("/smartyre/openapi/vehicle/tyre/unbind",
@@ -196,14 +196,14 @@ def test_vehicle_delete_unmounts_mounted_tires(monkeypatch):
 def test_vehicle_not_found_404(monkeypatch):
     store = FakeStore({})
     _wire(monkeypatch, vdel, store, FakeRemote())
-    assert vdel.handler(_ev(99), None)["statusCode"] == 404
+    assert vdel.delete_now(_ev(99), None)["statusCode"] == 404
 
 
 def test_already_deleted_is_idempotent(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 1}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert remote.calls == []
 
@@ -463,7 +463,7 @@ def test_already_deleted_with_pending_daijin_does_not_retry_inline(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 1, "daijin_id": "33"}})
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert remote.calls == []
 
@@ -481,7 +481,7 @@ def test_db_error_after_dajin_ok_returns_500_with_daijin_id(monkeypatch):
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
     monkeypatch.setattr(vdel, "update", boom)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 500
     assert "33" in resp["body"]
 
@@ -492,7 +492,7 @@ def test_pending_delete_body_contract(monkeypatch):
     store = FakeStore({1: {"id": 1, "is_deleted": 0, "tbox_id": None, "daijin_id": "33"}})
     remote = FakeRemote((TRANSIENT, "timeout x3"))
     _wire(monkeypatch, vdel, store, remote)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     body = json.loads(resp["body"])
     assert body["status"] == "deleting"
     assert body["reason"] == "timeout x3"
@@ -529,7 +529,7 @@ def test_vehicle_delete_triggers_gpshook_purge(monkeypatch):
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
     fx = _fake_httpx(monkeypatch)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert store.rows[1]["is_deleted"] == 1
     assert len(fx.posts) == 1
@@ -542,7 +542,7 @@ def test_vehicle_delete_transient_also_purges(monkeypatch):
     remote = FakeRemote((TRANSIENT, "timeout"))
     _wire(monkeypatch, vdel, store, remote)
     fx = _fake_httpx(monkeypatch)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 202
     assert store.rows[1]["is_deleted"] == 1
     assert len(fx.posts) == 1 and fx.posts[0][0].endswith("/unit/1/purge")
@@ -554,7 +554,7 @@ def test_gpshook_purge_failure_does_not_break_delete(monkeypatch):
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
     _fake_httpx(monkeypatch, fail=True)          # GPSHook caído
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200             # el delete se mantiene
     assert store.rows[1]["is_deleted"] == 1
 
@@ -565,7 +565,7 @@ def test_vehicle_delete_guard_does_not_purge(monkeypatch):
     remote = FakeRemote((GUARD, "vinculado"))
     _wire(monkeypatch, vdel, store, remote)
     fx = _fake_httpx(monkeypatch)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 409
     assert store.rows[1]["is_deleted"] == 0
     assert fx.posts == []                        # sin borrado -> sin purga
@@ -577,6 +577,6 @@ def test_already_deleted_does_not_purge(monkeypatch):
     remote = FakeRemote((DONE, None))
     _wire(monkeypatch, vdel, store, remote)
     fx = _fake_httpx(monkeypatch)
-    resp = vdel.handler(_ev(1), None)
+    resp = vdel.delete_now(_ev(1), None)
     assert resp["statusCode"] == 200
     assert fx.posts == []

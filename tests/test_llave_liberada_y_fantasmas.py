@@ -157,7 +157,7 @@ def test_el_identificador_queda_libre_al_borrar_la_unidad(monkeypatch):
                            "unit_identifier": "EC1054", "daijin_id": "33"}})
     _wire(monkeypatch, vdel, store, FakeRemote((DONE, None)))
 
-    resp = vdel.handler({"pathParameters": {"id": "1"}}, None)
+    resp = vdel.delete_now({"pathParameters": {"id": "1"}}, None)
 
     assert resp["statusCode"] == 200
     assert store.rows[1]["unit_identifier"] != "EC1054"
