@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where
-from shared.utils.response import error, pending
+from shared.utils.response import error, ok, pending
 
 from functions.packages.layout import tire_slots
 # Reusamos EXACTO el alta de unidad y la asignación de paquete. Referencias a
@@ -26,6 +26,9 @@ class CreateVehicleWithPackageRequest(BaseModel):
     vin: str = ""
     plates: str | None = None
     mileage: int = 0
+    # False: solo valida y crea la unidad; el FE captura sus llantas y después
+    # asigna el paquete con POST /packages/{id}/assign (reusa lo ya montado).
+    assign: bool = True
 
 
 def _body(resp: dict):
@@ -68,7 +71,7 @@ def handler(event, context):
         return error(422, f"El paquete tiene {len(sensores)} sensores y este tipo de unidad lleva {n}")
 
     headers = (event or {}).get("headers") or {}
-    unit_fields = body.model_dump(exclude={"package_id"})
+    unit_fields = body.model_dump(exclude={"package_id", "assign"})
     vresp = vehicle_create_handler({"body": json.dumps(unit_fields), "headers": headers}, context)
     if vresp["statusCode"] == 202:
         unidad = _body(vresp)
@@ -79,6 +82,8 @@ def handler(event, context):
     if vresp["statusCode"] != 200:
         return vresp  # 409/422/5xx del alta de la unidad, tal cual
     unidad = _body(vresp)
+    if not body.assign:
+        return ok({"unit": unidad, "assigned": False, "assigning": False, "deferred": True})
 
     aresp = start_assign(db, event, body.package_id, unidad.get("id"))
     if aresp["statusCode"] == 202:
