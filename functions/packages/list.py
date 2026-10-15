@@ -7,7 +7,7 @@ DEFAULT_LIMIT = 300
 MAX_LIMIT = 5000
 
 COLUMNS = ("id, name, unit_catalog_id, company_id, unit_id, status, "
-           "created_at, updated_at")
+           "assign_done, assign_total, assign_error, created_at, updated_at")
 
 
 def handler(event, context):

@@ -322,7 +322,7 @@ def test_assign_reuses_existing_tire_and_creates_missing(monkeypatch):
     calls = defaultdict(int)
     _wire_assign(monkeypatch, store, db, calls)
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 200
     # solo se creó UNA llanta (posición 2); la 1 se reutilizó
     assert calls["tire_create"] == 1
@@ -342,7 +342,7 @@ def test_assign_creates_all_tires_when_unit_empty(monkeypatch):
     calls = defaultdict(int)
     _wire_assign(monkeypatch, store, db, calls)
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 200
     assert calls["tire_create"] == 2  # se crean las 2 posiciones
     assert calls["bind_tire"] == 2
@@ -356,7 +356,7 @@ def test_assign_rejects_catalog_mismatch(monkeypatch):
     store.tables["units"][1]["unit_catalog_id"] = 999  # no coincide con el paquete
     calls = defaultdict(int)
     _wire_assign(monkeypatch, store, db, calls)
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 422
     assert calls["tire_create"] == 0
 
@@ -372,7 +372,7 @@ def test_assign_resolves_generic_by_convention_when_no_env(monkeypatch):
     _wire_assign(monkeypatch, store, db, calls)
     monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)  # forzar la convención
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 200
     assert calls["tire_create"] == 2
     created = list(store.tables["tires"].values())
@@ -387,7 +387,7 @@ def test_assign_500_when_no_generic_and_no_env(monkeypatch):
     _wire_assign(monkeypatch, store, db, calls)
     monkeypatch.delenv("GENERIC_TIRES_CATALOG_ID", raising=False)
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 500
     assert calls["tire_create"] == 0
 
@@ -410,7 +410,7 @@ def test_assign_maps_sensor_by_mount_position_not_id(monkeypatch):
 
     monkeypatch.setattr(passign, "bind_sensor_handler", capture_bind_sensor)
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 200
     # posición 1 -> sensor con mount_position 1 (id 21); posición 2 -> mount_position 2 (id 20)
     assert bound == [21, 20]
@@ -428,7 +428,7 @@ def test_assign_lote_without_tbox(monkeypatch):
     calls = defaultdict(int)
     _wire_assign(monkeypatch, store, db, calls)
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 200
     assert calls["tire_create"] == 2
     assert calls["bind_tire"] == 2
@@ -455,7 +455,7 @@ def test_assign_202_with_progress_and_audit_on_pending(monkeypatch):
     monkeypatch.setattr(passign, "tire_create_handler", pending_tire_create)
     monkeypatch.setattr(passign, "audit", lambda *a, **k: audits.append(k))
 
-    resp = passign.handler(_assign_event(1, 1), None)
+    resp = passign.assign_now(_assign_event(1, 1), None)
     assert resp["statusCode"] == 202
     d = _body(resp)["data"]
     assert d["done"] == 0 and d["total"] == 2  # se cortó en la 1ª posición

@@ -38,6 +38,7 @@ provider:
           Resource:
             - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-sensorsBulkSyncWorker
             - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-tboxesBulkSyncWorker
+            - arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${sls:stage}-assignPackageWorker
 
 package:
   patterns:
@@ -65,6 +66,7 @@ functions:
     timeout: 29
     environment:
       GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
+      ASSIGN_WORKER_FUNCTION: ${self:service}-${sls:stage}-assignPackageWorker
     events:
       - http:
           path: /vehicles/with-package
@@ -405,12 +407,21 @@ functions:
   assignPackage:
     handler: functions/packages/assign.handler
     environment:
-      GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
+      ASSIGN_WORKER_FUNCTION: ${self:service}-${sls:stage}-assignPackageWorker
     events:
       - http:
           path: /packages/{id}/assign
           method: post
           cors: ${self:custom.cors}
+
+  # Monta el paquete fuera de API Gateway (sin el límite de 29 s). Sin reintentos de
+  # AWS: dos corridas a la vez competirían por las mismas llantas; reintenta adentro.
+  assignPackageWorker:
+    handler: functions/packages/assign_worker.handler
+    timeout: 900
+    maximumRetryAttempts: 0
+    environment:
+      GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
 
   # Sedes y almacenes por compañía. Operación local: la plataforma no los conoce.
   listSites:
@@ -507,6 +518,27 @@ functions:
       - schedule:
           rate: rate(15 minutes)
           enabled: true
+
+resources:
+  Resources:
+    # Los errores que genera API Gateway (504 por timeout, 502, 403) no pasan por la
+    # Lambda y salían sin CORS: el navegador solo mostraba "Failed to fetch".
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: { Ref: ApiGatewayRestApi }
+        ResponseType: DEFAULT_4XX
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-Amzn-Trace-Id,X-Actor'"
+    GatewayResponseDefault5XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: { Ref: ApiGatewayRestApi }
+        ResponseType: DEFAULT_5XX
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-Amzn-Trace-Id,X-Actor'"
 
 plugins:
   - serverless-python-requirements

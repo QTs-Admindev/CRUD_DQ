@@ -22,6 +22,8 @@ def handler(event, context):
         return error(404, "Paquete no encontrado")
     if pkg.get("status") == "retired":
         return ok(pkg)  # idempotente
+    if pkg.get("status") in ("assigning", "assign_failed"):
+        return error(409, "El paquete está montado a medias en una unidad; termina la asignación")
     if pkg.get("status") == "assigned":
         return error(409, "El paquete ya fue asignado (consumido) y montado en una unidad; "
                           "no se puede eliminar")
