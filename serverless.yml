@@ -432,6 +432,23 @@ functions:
     environment:
       GENERIC_TIRES_CATALOG_ID: ${env:GENERIC_TIRES_CATALOG_ID, ''}
 
+  # Operador asignado a cada unidad. Los operadores los administra CRUDTires.
+  assignVehicleDriver:
+    handler: functions/drivers/assign.handler
+    events:
+      - http:
+          path: /vehicles/{id}/driver
+          method: put
+          cors: ${self:custom.cors}
+
+  listDriverAssignments:
+    handler: functions/drivers/list.handler
+    events:
+      - http:
+          path: /driver-assignments
+          method: get
+          cors: ${self:custom.cors}
+
   # Sedes y almacenes por compañía. Operación local: la plataforma no los conoce.
   listSites:
     handler: functions/sites/list.handler
