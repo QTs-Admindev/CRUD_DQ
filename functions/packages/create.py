@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.audit import audit
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
@@ -46,6 +47,8 @@ def _record(resp: dict) -> dict:
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     # 1. Validar input
     try:
         body = CreatePackageRequest.model_validate(json.loads(event.get("body") or "{}"))

@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.auth import solo_admin
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import exists, get_by_id, update
@@ -15,6 +16,8 @@ class AssignRequest(BaseModel):
 
 def handler(event, context):
     # POST /sensors/{id}/assign -> move a sensor from inventory to a company.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

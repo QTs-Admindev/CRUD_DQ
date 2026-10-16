@@ -22,8 +22,8 @@ import os
 import boto3
 from pydantic import BaseModel, ValidationError
 
+from shared.auth import resolve_company_scope, solo_admin
 from shared.audit import actor_from
-from shared.auth import resolve_company_scope
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_where
@@ -65,6 +65,8 @@ def _invoke_worker(ids: list[int], actor: str) -> bool:
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     # 1. Validar el body (todo opcional)
     try:
         req = ResyncRequest.model_validate(json.loads(event.get("body") or "{}"))

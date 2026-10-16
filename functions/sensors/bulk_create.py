@@ -28,6 +28,7 @@ import os
 import boto3
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.activation import liberar_llave_natural
 from shared.audit import audit, actor_from
 from shared.config import t
@@ -71,6 +72,8 @@ def _invoke_worker(ids: list[int], actor: str) -> bool:
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     # 1. Validate input shape
     try:
         body = BulkCreateRequest.model_validate(json.loads(event.get("body") or "{}"))

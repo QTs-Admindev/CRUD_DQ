@@ -23,3 +23,32 @@ def resolve_company_scope(event, requested_company_id):
     if requested_company_id == ADMIN_COMPANY_ID:
         return None
     return requested_company_id
+
+
+SOLO_ADMIN = "Solo Quinta puede crear, editar o borrar sensores, Qbox y paquetes. Tu compañía puede asignarlos y desasignarlos."
+
+
+def compania_que_llama(event):
+    """La compañía de quien opera, del header X-Company que manda el FE (la de su
+    cuenta). None si no viene o no es un entero."""
+    headers = (event or {}).get("headers") or {}
+    valor = headers.get("X-Company") or headers.get("x-company")
+    try:
+        return int(valor) if valor not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def solo_admin(event):
+    """403 si quien llama es de una compañía que no es la admin; None si puede.
+
+    Sin el header no se bloquea: llamadas internas entre funciones y el FE que aún
+    no lo manda. No es autenticación, igual que X-Actor: evita que la pantalla o un
+    cliente del API de una compañía cree o borre inventario que solo opera Quinta.
+    """
+    from shared.utils.response import error
+
+    quien = compania_que_llama(event)
+    if quien is not None and quien != ADMIN_COMPANY_ID:
+        return error(403, SOLO_ADMIN)
+    return None

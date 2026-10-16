@@ -3,6 +3,7 @@ import logging
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.activation import NotOnPlatform, PlatformUnavailable, confirm_on_platform
 from shared.audit import audit
 from shared.config import t
@@ -36,6 +37,8 @@ class UpdateTboxRequest(BaseModel):
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         tbox_id = int(event["pathParameters"]["id"])
     except (KeyError, TypeError, ValueError):

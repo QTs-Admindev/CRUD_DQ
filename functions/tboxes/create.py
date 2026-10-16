@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.activation import liberar_llave_natural
 from shared.audit import audit
 from shared.config import t
@@ -36,6 +37,8 @@ class CreateTboxRequest(BaseModel):
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     # 1. Validate input
     try:
         body = CreateTboxRequest.model_validate(json.loads(event.get("body") or "{}"))

@@ -1,3 +1,4 @@
+from shared.auth import solo_admin
 from shared.activation import liberar_llave_natural, llave_original
 from shared.audit import audit
 from shared.config import t
@@ -10,6 +11,8 @@ from shared.utils.response import error, ok, pending_delete
 
 def handler(event, context):
     # DELETE /sensors/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

@@ -584,6 +584,7 @@ custom:
       - X-Amz-User-Agent
       - X-Amzn-Trace-Id
       - X-Actor
+      - X-Company
     allowCredentials: false
   pythonRequirements:
     dockerizePip: false
