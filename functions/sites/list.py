@@ -3,6 +3,7 @@ import pymysql.cursors
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_many
+from shared.locations import compania_que_pide
 from shared.utils.response import error, ok
 
 LIMITE = 5000
@@ -12,15 +13,13 @@ def handler(event, context):
     # GET /sites?company_id=.. -> sedes con sus almacenes y cuántos activos tiene
     # cada uno, todo en una respuesta para la pantalla de sedes y almacenes.
     # La compañía admin (o sin company_id) ve las de todas; las demás, las suyas.
-    qs = event.get("queryStringParameters") or {}
+    try:
+        company_id = compania_que_pide(event)
+    except ValueError:
+        return error(422, "company_id must be an integer")
     filtros: dict = {}
-    if qs.get("company_id"):
-        try:
-            company_id = int(qs["company_id"])
-        except ValueError:
-            return error(422, "company_id must be an integer")
-        if company_id != ADMIN_COMPANY_ID:
-            filtros["company_id"] = company_id
+    if company_id is not None and company_id != ADMIN_COMPANY_ID:
+        filtros["company_id"] = company_id
 
     db = get_db()
     try:

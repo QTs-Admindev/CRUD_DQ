@@ -1,9 +1,12 @@
+from shared.auth import compania_que_llama
 from shared.config import ADMIN_COMPANY_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import count_rows, get_many
 from shared.utils.response import error, ok
 
 DEFAULT_LIMIT = 300
+
+SOLO_PROPIOS = {"sites", "warehouses"}
 MAX_LIMIT = 5000
 
 # Modo paginado (`?paged=1`): en vez del arreglo pelón devuelve {data, total, limit,
@@ -111,6 +114,11 @@ def handler(event, context):
         # Admin company sees everything (incl. unassigned inventory); others only their own.
         if company_id != ADMIN_COMPANY_ID:
             filters["company_id"] = company_id
+    # Sedes y almacenes: una compañía cliente solo ve los suyos (header X-Company),
+    # pida lo que pida.
+    llama = compania_que_llama(event)
+    if resource in SOLO_PROPIOS and llama is not None and llama != ADMIN_COMPANY_ID:
+        filters["company_id"] = llama
 
     limit = DEFAULT_LIMIT
     if qs.get("limit"):
