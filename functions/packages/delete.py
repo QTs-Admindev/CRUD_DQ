@@ -1,3 +1,4 @@
+from shared.auth import solo_admin
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -11,6 +12,8 @@ def handler(event, context):
     # `packages` no tiene is_deleted: el borrado suave es status='retired'.
     # No se puede retirar un paquete ya asignado: asignar es TERMINAL e irreversible,
     # el kit quedó consumido y montado en una unidad. No hay unassign que lo recupere.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         pid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

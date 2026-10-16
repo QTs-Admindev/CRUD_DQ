@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from shared.auth import solo_admin
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -18,6 +19,8 @@ def handler(event, context):
     # POST /packages/{id}/move -> reasigna el paquete (y su tbox + sensores) a otra
     # compañía. Es una operación LOCAL: Dajin usa orgId 218 (no company), así que no
     # hay nada que sincronizar con la plataforma.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         pid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

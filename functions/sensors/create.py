@@ -3,6 +3,7 @@ import os
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.activation import liberar_llave_natural
 from shared.audit import audit
 from shared.config import t
@@ -44,6 +45,8 @@ class CreateSensorRequest(BaseModel):
 
 
 def handler(event, context):
+    if (prohibido := solo_admin(event)):
+        return prohibido
     # 1. Validate input
     try:
         body = CreateSensorRequest.model_validate(json.loads(event.get("body") or "{}"))

@@ -1,3 +1,4 @@
+from shared.auth import solo_admin
 from shared.activation import liberar_llave_natural, llave_original
 from shared.audit import audit
 from shared.config import t
@@ -12,6 +13,8 @@ def handler(event, context):
     # DELETE /tboxes/{id} -> la plataforma primero: borra en la plataforma (basic-api) y luego soft-delete local.
     # Nota: el TBox SÍ tiene delete OFICIAL en la OpenAPI (`tbox/delete`). Aquí se usa la
     # basic-api por uniformidad con los otros 3; migrar a la vía oficial cuando se cablee.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         rid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):

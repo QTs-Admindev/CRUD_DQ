@@ -2,6 +2,7 @@ import json
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from shared.auth import solo_admin
 from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
@@ -41,6 +42,8 @@ def handler(event, context):
     # El nombre solo identifica, así que se edita también en un paquete asignado;
     # el hardware (tbox y sensores) solo mientras está preparado (prepared). Un
     # paquete retirado ya no se edita.
+    if (prohibido := solo_admin(event)):
+        return prohibido
     try:
         pid = int((event.get("pathParameters") or {})["id"])
     except (KeyError, TypeError, ValueError):
