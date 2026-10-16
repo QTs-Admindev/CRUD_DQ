@@ -8,6 +8,7 @@ from shared.audit import actor_from, audit
 from shared.config import DAJIN_ORG_ID, GPSHOOK_URL, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, soft_delete, update
+from shared.operadores import soltar_unidad_borrada
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete
 from shared.smarttyre.client import SmartTyreClient, SmartTyreError
 from shared.utils.clock import now_ms
@@ -203,6 +204,7 @@ def delete_now(event, context):
             # La plataforma no respondió: borrado local hecho, limpieza remota pendiente
             # (conserva daijin_id -> la reconciliación lo retoma).
             rec = soft_delete(db, t("units"), rid)
+            soltar_unidad_borrada(db, rid, now_ms(), actor_from(event))
             db.commit()
             audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
                   natural_key=rec.get("unit_identifier"), company_id=rec.get("company_id"),
@@ -216,6 +218,7 @@ def delete_now(event, context):
             # puede seguir ocupando el índice UNIQUE. Ver liberar_llave_natural.
             **liberar_llave_natural(rec, "units"),
         })
+        soltar_unidad_borrada(db, rid, now_ms(), actor_from(event))
         db.commit()
         audit(db, event, context, action="update", asset_type="unit", asset_id=rid,
               natural_key=llave_original(rec.get("unit_identifier")), company_id=rec.get("company_id"),
