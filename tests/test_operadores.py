@@ -29,6 +29,7 @@ CREATE TABLE driver_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT,
   active_driver_id INT GENERATED ALWAYS AS (CASE WHEN released_at IS NULL THEN driver_id END) STORED);
 CREATE UNIQUE INDEX uq_da_active_unit ON driver_assignments (active_unit_id);
 CREATE UNIQUE INDEX uq_da_active_driver ON driver_assignments (active_driver_id);
+CREATE TABLE packages (id INTEGER PRIMARY KEY, unit_id INT, status TEXT, updated_at INT);
 CREATE TABLE asset_audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT,
   actor TEXT, action TEXT, asset_type TEXT, asset_id INT, natural_key TEXT,
   company_id INT, daijin_id TEXT, result TEXT, payload TEXT, changes TEXT, error TEXT,
@@ -222,11 +223,14 @@ def test_lista_vigentes_por_compania(db):
     assert _get(company_id=8, history=1)["statusCode"] == 422
 
 
-def test_borrar_la_unidad_libera_al_operador(db):
+def test_borrar_la_unidad_libera_al_operador_y_retira_su_paquete(db):
     _ok(_put(10, {"driver_id": 1}))
+    db.sembrar("packages", id=5, unit_id=10, status="assigned")
+    db.sembrar("packages", id=6, unit_id=11, status="assigned")
     vdel.soltar_unidad_borrada(db, 10, 123, "ops@cliente.mx")
     db.commit()
     assert _vigentes(db) == []
+    assert db.filas("SELECT id, status FROM packages ORDER BY id") == [(5, "retired"), (6, "assigned")]
     _ok(_put(11, {"driver_id": 1}))
     assert _vigentes(db) == [(11, 1)]
 

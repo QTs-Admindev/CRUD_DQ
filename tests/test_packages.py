@@ -623,3 +623,28 @@ def test_edit_happy_swaps_sensor_and_reseals_tbox(monkeypatch):
     data = _body(resp)
     assert data["tbox"]["tboxCode"] == "DD44EE55FF66"
     assert len(data["sensors"]) == 2
+
+
+def test_list_hides_what_was_deleted(monkeypatch):
+    # Lo borrado no sale en la plataforma: ni paquetes retirados, ni los de una
+    # unidad borrada, ni sensores o Qbox borrados dentro de un paquete vigente.
+    store, db = Store(), FakeDB()
+    store.seed("units", {"id": 7, "is_deleted": 0})
+    store.seed("units", {"id": 8, "is_deleted": 1})
+    for pid, status, unit in ((1, "prepared", None), (2, "retired", None),
+                              (3, "assigned", 7), (4, "assigned", 8)):
+        store.seed("packages", {"id": pid, "name": f"p{pid}", "unit_catalog_id": 209,
+                                "company_id": 2, "unit_id": unit, "status": status})
+    store.seed("tboxes", {"id": 50, "tboxCode": "AA11BB22CC33#del-50", "package_id": 1, "is_deleted": 1})
+    store.seed("sensors", {"id": 20, "package_id": 1, "is_deleted": 0})
+    store.seed("sensors", {"id": 21, "package_id": 1, "is_deleted": 1})
+    _wire_list(monkeypatch, store, db)
+
+    rows = {r["id"]: r for r in _body(plist.handler({}, None))}
+    assert sorted(rows) == [1, 3]
+    assert rows[1]["sensor_count"] == 1
+    assert rows[1]["tboxCode"] is None
+
+    # Pedidos a propósito, los retirados siguen disponibles.
+    retirados = _body(plist.handler({"queryStringParameters": {"status": "retired"}}, None))
+    assert [r["id"] for r in retirados] == [2]

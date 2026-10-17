@@ -13,6 +13,7 @@ COLUMNS = ("id, name, unit_catalog_id, company_id, unit_id, status, "
 def handler(event, context):
     # GET /packages -> lista de paquetes. Filtros opcionales por query string:
     #   ?company_id=..  (la compañía admin ve todo), ?status=prepared|assigned|retired
+    # Sin status no salen los retirados ni los paquetes de una unidad borrada.
     qs = event.get("queryStringParameters") or {}
 
     filters: dict = {}
@@ -36,10 +37,22 @@ def handler(event, context):
 
     db = get_db()
     try:
-        rows = get_many(db, t("packages"), COLUMNS, filters, limit=limit)
-        return ok(_enrich(db, rows))
+        # Se trae el tope y se filtra aquí, así lo oculto no se come el límite.
+        rows = get_many(db, t("packages"), COLUMNS, filters, limit=MAX_LIMIT)
+        if not qs.get("status"):
+            rows = _vigentes(db, rows)
+        return ok(_enrich(db, rows[:limit]))
     except Exception as e:
         return error(500, f"DB error (list packages): {e}")
+
+
+def _vigentes(db, rows: list[dict]) -> list[dict]:
+    # Lo borrado no se muestra: ni los paquetes retirados ni los de una unidad borrada.
+    rows = [r for r in rows if r.get("status") != "retired"]
+    unit_ids = {r["unit_id"] for r in rows if r.get("unit_id") is not None}
+    borradas = {u["id"] for u in get_in(db, t("units"), "id", unit_ids, "id, is_deleted")
+                if u.get("is_deleted")}
+    return [r for r in rows if r.get("unit_id") not in borradas]
 
 
 def _enrich(db, rows: list[dict]) -> list[dict]:
@@ -52,13 +65,16 @@ def _enrich(db, rows: list[dict]) -> list[dict]:
         return rows
 
     counts: dict = {}
-    for s in get_in(db, t("sensors"), "package_id", ids, "id, package_id"):
+    for s in get_in(db, t("sensors"), "package_id", ids, "id, package_id, is_deleted"):
+        if s.get("is_deleted"):
+            continue
         pid = s.get("package_id")
         counts[pid] = counts.get(pid, 0) + 1
 
     tbox_by_pkg: dict = {}
-    for tb in get_in(db, t("tboxes"), "package_id", ids, "package_id, tboxCode"):
-        tbox_by_pkg[tb.get("package_id")] = tb.get("tboxCode")
+    for tb in get_in(db, t("tboxes"), "package_id", ids, "package_id, tboxCode, is_deleted"):
+        if not tb.get("is_deleted"):
+            tbox_by_pkg[tb.get("package_id")] = tb.get("tboxCode")
 
     for r in rows:
         r["sensor_count"] = counts.get(r["id"], 0)
