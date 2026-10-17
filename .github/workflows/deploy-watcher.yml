@@ -54,4 +54,5 @@ jobs:
 
       - name: WhatsApp de prueba
         if: ${{ inputs.prueba }}
-        run: serverless invoke --stage prod -f check --data '{"prueba": true}'
+        run: |
+          serverless invoke --stage prod -f check --data '{"prueba": true}'
