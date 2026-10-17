@@ -13,6 +13,7 @@ que manda el FE (query string en GET/PUT/DELETE, cuerpo en POST).
 """
 import pymysql
 
+from shared.auth import compania_que_llama
 from shared.config import ADMIN_COMPANY_ID
 
 NOMBRE_MAX = 120
@@ -40,11 +41,25 @@ def limpiar_nombre(valor) -> str:
 
 
 def compania_que_pide(event):
-    """El company_id del query string, o None. Lanza ValueError si no es entero."""
+    """El company_id del query string, o None. Lanza ValueError si no es entero.
+
+    Si el header X-Company dice que quien opera es de una compañía cliente, manda
+    esa: fuera de la admin cada quien ve y opera solo sus sedes y almacenes, pida
+    lo que pida en el query string.
+    """
+    llama = compania_que_llama(event)
+    if llama is not None and llama != ADMIN_COMPANY_ID:
+        return llama
     qs = (event or {}).get("queryStringParameters") or {}
     if not qs.get("company_id"):
         return None
     return int(qs["company_id"])
+
+
+def puede_crear_en(event, company_id) -> bool:
+    """Una compañía cliente solo crea sedes y almacenes propios; la admin, en cualquiera."""
+    llama = compania_que_llama(event)
+    return llama is None or llama == ADMIN_COMPANY_ID or llama == company_id
 
 
 def en_alcance(company_que_pide, company_de_la_fila) -> bool:

@@ -450,3 +450,40 @@ def test_mover_paquete_saca_su_qbox_y_sensores_del_almacen(db):
     for tabla, rid in (("tboxes", 30), ("sensors", 20)):
         fila = db.fila(tabla, rid)
         assert fila["company_id"] == 8 and fila["warehouse_id"] is None
+
+
+# ─── Una compañía cliente solo ve y opera sus sedes (header X-Company) ────────
+
+def _de(company, ev):
+    ev["headers"] = {"X-Company": str(company)}
+    return ev
+
+
+def test_cliente_solo_ve_sus_sedes_pida_lo_que_pida(db):
+    _sede(db, 8, "Norte")
+    _sede(db, 9, "Sur")
+    for qs in (None, 9, 2):
+        resp = _ok(s_list.handler(_de(8, _ev(company_id=qs)), None))
+        assert {s["company_id"] for s in resp["sites"]} == {8}
+    filas = _ok(list_assets.handler(_de(8, {"pathParameters": {"resource": "sites"},
+                                            "queryStringParameters": None}), None))
+    assert {s["company_id"] for s in filas} == {8}
+
+
+def test_la_admin_sigue_viendo_todas(db):
+    _sede(db, 8, "Norte")
+    _sede(db, 9, "Sur")
+    resp = _ok(s_list.handler(_de(2, _ev(company_id=2)), None))
+    assert {s["company_id"] for s in resp["sites"]} == {8, 9}
+
+
+def test_cliente_no_crea_ni_toca_sedes_ajenas(db):
+    ajena = _sede(db, 9, "Sur")
+    r = s_create.handler(_de(8, _ev({"company_id": 9, "name": "Intrusa"})), None)
+    assert r["statusCode"] == 403
+    r = w_create.handler(_de(8, _ev({"company_id": 9, "name": "A", "site_id": ajena})), None)
+    assert r["statusCode"] == 403
+    # Aunque pida company_id=2 en el query, sigue acotado a la suya.
+    assert s_update.handler(_de(8, _ev({"name": "X"}, id=ajena, company_id=2)), None)["statusCode"] == 404
+    assert s_delete.handler(_de(8, _ev(id=ajena, company_id=2)), None)["statusCode"] == 404
+    _ok(s_create.handler(_de(8, _ev({"company_id": 8, "name": "Propia"})), None))

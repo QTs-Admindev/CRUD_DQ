@@ -7,7 +7,7 @@ from shared.audit import audit
 from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, insert
-from shared.locations import es_duplicado, limpiar_nombre
+from shared.locations import es_duplicado, limpiar_nombre, puede_crear_en
 from shared.utils.clock import now_ms
 from shared.utils.response import error, ok
 
@@ -31,6 +31,8 @@ def handler(event, context):
         body = CreateWarehouseRequest.model_validate(json.loads(event.get("body") or "{}"))
     except ValidationError as e:
         return error(422, e.errors())
+    if not puede_crear_en(event, body.company_id):
+        return error(403, "Solo puedes crear almacenes de tu compañía")
 
     db = get_db()
     if not get_by_id(db, "companies", body.company_id):
