@@ -42,6 +42,14 @@ jobs:
         # tboxes), ya no a los clones test_. Sin TABLE_PREFIX = sin prefijo (serverless.yml
         # lo default-ea a '' vía ${env:TABLE_PREFIX, ''}).
         run: serverless deploy --stage dev --verbose
+        env:
+          # Alerta de caída de la plataforma por WhatsApp (functions/monitoring/plataforma.py).
+          INCIDENT_NOTIFY_ENABLED: ${{ vars.INCIDENT_NOTIFY_ENABLED }}
+          WHATSAPP_INCIDENT_TEMPLATE: ${{ vars.WHATSAPP_INCIDENT_TEMPLATE }}
+          WHATSAPP_INCIDENT_LANG: ${{ vars.WHATSAPP_INCIDENT_LANG }}
+          INCIDENT_WHATSAPP_RECIPIENTS: ${{ secrets.INCIDENT_WHATSAPP_RECIPIENTS }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
 
       - name: Display endpoints
         run: serverless info --stage dev

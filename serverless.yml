@@ -545,6 +545,24 @@ functions:
           rate: rate(15 minutes)
           enabled: true
 
+  # Vigía de la plataforma: revisa los servicios cada 5 minutos y, si uno se cae,
+  # avisa por WhatsApp con la plantilla de incidente. Apagado por defecto.
+  platformHealth:
+    handler: functions/monitoring/plataforma.handler
+    timeout: 120
+    environment:
+      CRUD_DQ_URL: !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}
+      INCIDENT_NOTIFY_ENABLED: ${env:INCIDENT_NOTIFY_ENABLED, 'false'}
+      INCIDENT_WHATSAPP_RECIPIENTS: ${env:INCIDENT_WHATSAPP_RECIPIENTS, ''}
+      WHATSAPP_INCIDENT_TEMPLATE: ${env:WHATSAPP_INCIDENT_TEMPLATE, ''}
+      WHATSAPP_INCIDENT_LANG: ${env:WHATSAPP_INCIDENT_LANG, 'en'}
+      WHATSAPP_TOKEN: ${env:WHATSAPP_TOKEN, ''}
+      WHATSAPP_PHONE_NUMBER_ID: ${env:WHATSAPP_PHONE_NUMBER_ID, ''}
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
 resources:
   Resources:
     # Los errores que genera API Gateway (504 por timeout, 502, 403) no pasan por la

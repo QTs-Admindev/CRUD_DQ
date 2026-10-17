@@ -109,3 +109,24 @@ def avisar(tipo: str, datos: str, detalle: str, cuando: str) -> int:
             ok = False
         enviados += 1 if ok else 0
     return enviados
+
+
+def enviar_plantilla(plantilla: str, idioma: str, variables: list, destinatarios: list) -> int:
+    """Manda una plantilla con variables de texto a cada destinatario. Devuelve
+    cuántos salieron. No revisa NOTIFY_ENABLED: quien llama decide si se manda."""
+    if not (CONFIG["token"] and CONFIG["phone_id"]):
+        _log.error("whatsapp sin token o phone_id")
+        return 0
+    componentes = [{"type": "body", "parameters": [
+        {"type": "text", "text": str(x)} for x in variables]}]
+    enviados = 0
+    for numero in destinatarios:
+        ok = _post({
+            "messaging_product": "whatsapp",
+            "to": str(numero),
+            "type": "template",
+            "template": {"name": plantilla, "language": {"code": idioma},
+                         "components": componentes},
+        })
+        enviados += 1 if ok else 0
+    return enviados
