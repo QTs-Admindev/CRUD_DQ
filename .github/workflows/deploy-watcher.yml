@@ -1,0 +1,57 @@
+name: Deploy Watcher
+
+# Vigía de la plataforma (watcher/): stack aparte de CRUD_DQ. Solo se despliega
+# cuando cambia su carpeta, o a mano. Con "prueba" manda un WhatsApp de prueba.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'watcher/**'
+      - '.github/workflows/deploy-watcher.yml'
+  workflow_dispatch:
+    inputs:
+      prueba:
+        description: 'Mandar un WhatsApp de prueba después de desplegar'
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watcher
+    env:
+      INCIDENT_NOTIFY_ENABLED: ${{ vars.INCIDENT_NOTIFY_ENABLED }}
+      WHATSAPP_INCIDENT_TEMPLATE: ${{ vars.WHATSAPP_INCIDENT_TEMPLATE }}
+      WHATSAPP_INCIDENT_LANG: ${{ vars.WHATSAPP_INCIDENT_LANG }}
+      INCIDENT_WHATSAPP_RECIPIENTS: ${{ secrets.INCIDENT_WHATSAPP_RECIPIENTS }}
+      WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+      WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Tests
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest test_handler.py -q
+
+      - uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy
+        run: |
+          npm install -g serverless@3
+          serverless deploy --stage prod --verbose
+
+      - name: WhatsApp de prueba
+        if: ${{ inputs.prueba }}
+        run: serverless invoke --stage prod -f check --data '{"prueba": true}'

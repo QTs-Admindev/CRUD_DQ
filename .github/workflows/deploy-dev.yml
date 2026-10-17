@@ -5,6 +5,10 @@ on:
     branches:
       - main
       - dev
+    # El vigía (watcher/) se despliega aparte, con deploy-watcher.yml.
+    paths-ignore:
+      - 'watcher/**'
+      - '.github/workflows/deploy-watcher.yml'
   workflow_dispatch:
 
 jobs:

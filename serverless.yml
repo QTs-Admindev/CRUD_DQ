@@ -50,6 +50,7 @@ package:
     - '!*.md'
     - '!__pycache__/**'
     - '!.venv/**'
+    - '!watcher/**'
     - 'shared/**'
     - 'functions/**'
 
