@@ -1,0 +1,56 @@
+# Vigía de la plataforma: servicio aparte, con su propio stack. No comparte código,
+# base ni despliegue con CRUD_DQ; solo vive en el mismo repo. Ver handler.py.
+service: quinta-platform-watcher
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-east-1
+  stage: ${opt:stage, 'prod'}
+  memorySize: 256
+  timeout: 120
+  environment:
+    STATE_TABLE: ${self:service}-${sls:stage}-state
+    INCIDENT_NOTIFY_ENABLED: ${env:INCIDENT_NOTIFY_ENABLED, 'false'}
+    WHATSAPP_INCIDENT_TEMPLATE: ${env:WHATSAPP_INCIDENT_TEMPLATE, 'platform_incident_detected'}
+    WHATSAPP_INCIDENT_LANG: ${env:WHATSAPP_INCIDENT_LANG, 'en'}
+    INCIDENT_WHATSAPP_RECIPIENTS: ${env:INCIDENT_WHATSAPP_RECIPIENTS, ''}
+    WHATSAPP_TOKEN: ${env:WHATSAPP_TOKEN, ''}
+    WHATSAPP_PHONE_NUMBER_ID: ${env:WHATSAPP_PHONE_NUMBER_ID, ''}
+  iam:
+    role:
+      statements:
+        # Solo su propia tabla de estado.
+        - Effect: Allow
+          Action:
+            - dynamodb:Scan
+            - dynamodb:PutItem
+          Resource: !GetAtt StateTable.Arn
+
+package:
+  patterns:
+    - '!**'
+    - 'handler.py'
+
+functions:
+  check:
+    handler: handler.check
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
+resources:
+  Resources:
+    StateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.STATE_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: service
+            AttributeType: S
+        KeySchema:
+          - AttributeName: service
+            KeyType: HASH
