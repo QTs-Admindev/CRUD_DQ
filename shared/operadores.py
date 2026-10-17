@@ -45,9 +45,15 @@ def soltar(db, campo: str, valor, cuando: int, quien: str | None) -> int:
 
 
 def soltar_unidad_borrada(db, unit_id, cuando: int, quien: str | None) -> None:
-    """Al borrar una unidad su operador queda libre. Nunca rompe el borrado: si
-    falla, la asignación de la unidad borrada se ignora al reasignar."""
+    """Al borrar una unidad su operador queda libre y su paquete se retira. Nunca
+    rompe el borrado: si falla, la lista ya oculta lo de unidades borradas."""
     try:
         soltar(db, "unit_id", unit_id, cuando, quien)
     except Exception as e:
         _log.warning("no se liberó el operador de la unidad %s: %s", unit_id, e)
+    try:
+        with db.cursor() as cur:
+            cur.execute(f"UPDATE {t('packages')} SET status = 'retired', updated_at = %s "
+                        "WHERE unit_id = %s AND status <> 'retired'", [cuando, unit_id])
+    except Exception as e:
+        _log.warning("no se retiró el paquete de la unidad %s: %s", unit_id, e)

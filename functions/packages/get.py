@@ -17,8 +17,9 @@ def handler(event, context):
         return error(404, "Paquete no encontrado")
 
     try:
-        tboxes = get_where(db, t("tboxes"), "package_id = %s", [pid], 50)
-        sensors = get_where(db, t("sensors"), "package_id = %s", [pid], 500)
+        # Los miembros borrados ya no son parte del paquete.
+        tboxes = get_where(db, t("tboxes"), "package_id = %s AND (is_deleted IS NULL OR is_deleted = 0)", [pid], 50)
+        sensors = get_where(db, t("sensors"), "package_id = %s AND (is_deleted IS NULL OR is_deleted = 0)", [pid], 500)
     except Exception as e:
         return error(500, f"DB error (get package members): {e}")
 
