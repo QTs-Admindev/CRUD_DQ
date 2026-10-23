@@ -50,7 +50,7 @@ def config() -> dict:
     return {
         "enabled": (os.getenv("INCIDENT_NOTIFY_ENABLED") or "false").lower() == "true",
         "template": os.getenv("WHATSAPP_INCIDENT_TEMPLATE") or "platform_incident_detected",
-        "lang": os.getenv("WHATSAPP_INCIDENT_LANG") or "en",
+        "lang": os.getenv("WHATSAPP_INCIDENT_LANG") or "en_US",
         "token": os.getenv("WHATSAPP_TOKEN") or "",
         "phone_id": os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "",
         "api_version": os.getenv("WHATSAPP_API_VERSION") or "v23.0",
@@ -198,3 +198,26 @@ def check(event, context, estado_cls=Estado):
     caidos = [n for n, e in estados.items() if e]
     log.info("caídos=%s avisos=%s", caidos, avisos)
     return {"caidos": caidos, "avisos": avisos}
+
+
+# ─── Reporte diario ────────────────────────────────────────────────────────────
+
+def variables_reporte(estados: dict, ahora_ms: int) -> list[str]:
+    """Las 8 variables con el estado de los seis servicios.
+
+    Provisional sobre la plantilla de incidentes mientras Meta aprueba una de
+    reporte: el primer servicio va en el detalle porque solo hay cinco renglones.
+    """
+    hora = datetime.fromtimestamp(ahora_ms / 1000, CDMX).strftime("%d/%m %H:%M")
+    caidos = [n for n, e in estados.items() if e]
+    resumen = "Todo en línea" if not caidos else f"{len(caidos)} caído(s): {', '.join(caidos)}"
+    lineas = [f"{nombre}: {err or 'OK'}" for nombre, err in estados.items()]
+    return [f"Reporte diario {hora} (CDMX)", resumen, lineas[0], *lineas[1:]][:8]
+
+
+def reporte(event, context):
+    cfg = config()
+    estados = {nombre: revisar(url) for nombre, url in SERVICIOS}
+    enviados = enviar(cfg, variables_reporte(estados, int(time.time() * 1000)))
+    log.info("reporte: enviados=%s estados=%s", enviados, estados)
+    return {"enviados": enviados, "estados": estados}

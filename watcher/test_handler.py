@@ -20,6 +20,21 @@ def _estados(**caidos):
     return e
 
 
+def test_reporte_lleva_los_seis_servicios_en_8_variables():
+    v = h.variables_reporte(_estados(Admin="HTTP 502"), 1_761_220_800_000)
+    assert len(v) == 8 and all(v)
+    assert v[0].startswith("Reporte diario") and "(CDMX)" in v[0]
+    assert v[1] == "1 caído(s): Admin"
+    assert "Admin: HTTP 502" in v[2:]
+    assert h.variables_reporte(_estados(), 0)[1] == "Todo en línea"
+
+
+def test_reporte_apagado_no_manda(monkeypatch):
+    monkeypatch.setattr(h, "revisar", lambda url: None)
+    monkeypatch.setattr(h, "config", lambda: _cfg(enabled=False))
+    assert h.reporte({}, None)["enviados"] == 0
+
+
 def test_parpadeo_no_avisa_y_dos_fallas_si(monkeypatch):
     enviados = []
     monkeypatch.setattr(h, "enviar", lambda cfg, v: enviados.append(v) or 1)
