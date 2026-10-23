@@ -9,6 +9,7 @@ import handler as h
 
 def _cfg(**kw):
     base = {"enabled": True, "template": "platform_incident_detected", "lang": "en",
+            "ok_template": "plataform_ok_confirmation",
             "token": "t", "phone_id": "p", "api_version": "v23.0",
             "recipients": ["5210000000000"], "table": "x"}
     return {**base, **kw}
@@ -18,6 +19,34 @@ def _estados(**caidos):
     e = {nombre: None for nombre, _ in h.SERVICIOS}
     e.update({k.replace("_", " "): v for k, v in caidos.items()})
     return e
+
+
+def test_reporte_lleva_los_seis_servicios_en_8_variables():
+    v = h.variables_reporte(_estados(Admin="HTTP 502"), 1_761_220_800_000)
+    assert len(v) == 8 and all(v)
+    assert v[0].startswith("Reporte diario") and "(CDMX)" in v[0]
+    assert v[1] == "1 caído(s): Admin"
+    assert "Admin: HTTP 502" in v[2:]
+    assert h.variables_reporte(_estados(), 0)[1] == "Todo en línea"
+
+
+def test_reporte_todo_ok_manda_la_confirmacion_y_caido_el_detalle(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(h, "enviar", lambda cfg, v, plantilla=None: llamadas.append((v, plantilla)) or 1)
+    monkeypatch.setattr(h, "config", lambda: _cfg(ok_template="ok_tpl"))
+    monkeypatch.setattr(h, "revisar", lambda url: None)
+    h.reporte({}, None)
+    assert llamadas[-1] == ([], "ok_tpl")
+    monkeypatch.setattr(h, "revisar", lambda url: "HTTP 502" if "admin" in url else None)
+    h.reporte({}, None)
+    v, plantilla = llamadas[-1]
+    assert plantilla is None and len(v) == 8 and v[1] == "1 caído(s): Admin"
+
+
+def test_reporte_apagado_no_manda(monkeypatch):
+    monkeypatch.setattr(h, "revisar", lambda url: None)
+    monkeypatch.setattr(h, "config", lambda: _cfg(enabled=False))
+    assert h.reporte({}, None)["enviados"] == 0
 
 
 def test_parpadeo_no_avisa_y_dos_fallas_si(monkeypatch):

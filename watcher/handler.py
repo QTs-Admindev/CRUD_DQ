@@ -50,7 +50,9 @@ def config() -> dict:
     return {
         "enabled": (os.getenv("INCIDENT_NOTIFY_ENABLED") or "false").lower() == "true",
         "template": os.getenv("WHATSAPP_INCIDENT_TEMPLATE") or "platform_incident_detected",
-        "lang": os.getenv("WHATSAPP_INCIDENT_LANG") or "en",
+        # Sin variables. El nombre va así en Meta ("plataform").
+        "ok_template": os.getenv("WHATSAPP_OK_TEMPLATE") or "plataform_ok_confirmation",
+        "lang": os.getenv("WHATSAPP_INCIDENT_LANG") or "en_US",
         "token": os.getenv("WHATSAPP_TOKEN") or "",
         "phone_id": os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "",
         "api_version": os.getenv("WHATSAPP_API_VERSION") or "v23.0",
@@ -93,7 +95,7 @@ def variables(caido: str, error: str, url: str, desde_ms: int, fallas: int,
 
 # ─── WhatsApp ──────────────────────────────────────────────────────────────────
 
-def enviar(cfg: dict, vars_: list[str]) -> int:
+def enviar(cfg: dict, vars_: list[str], plantilla: str | None = None) -> int:
     """Manda la plantilla a cada destinatario. Devuelve cuántos salieron. No propaga."""
     if not cfg["enabled"]:
         return 0
@@ -107,9 +109,9 @@ def enviar(cfg: dict, vars_: list[str]) -> int:
             "messaging_product": "whatsapp",
             "to": str(numero),
             "type": "template",
-            "template": {"name": cfg["template"], "language": {"code": cfg["lang"]},
+            "template": {"name": plantilla or cfg["template"], "language": {"code": cfg["lang"]},
                          "components": [{"type": "body", "parameters": [
-                             {"type": "text", "text": str(v)} for v in vars_]}]},
+                             {"type": "text", "text": str(v)} for v in vars_]}] if vars_ else []},
         }).encode()
         req = urllib.request.Request(url, data=cuerpo, method="POST", headers={
             "Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"})
@@ -198,3 +200,27 @@ def check(event, context, estado_cls=Estado):
     caidos = [n for n, e in estados.items() if e]
     log.info("caídos=%s avisos=%s", caidos, avisos)
     return {"caidos": caidos, "avisos": avisos}
+
+
+# ─── Reporte diario ────────────────────────────────────────────────────────────
+
+def variables_reporte(estados: dict, ahora_ms: int) -> list[str]:
+    """Las 8 variables de la plantilla de incidentes con el estado de los seis
+    servicios. El primero va en el detalle porque solo hay cinco renglones."""
+    hora = datetime.fromtimestamp(ahora_ms / 1000, CDMX).strftime("%d/%m %H:%M")
+    caidos = [n for n, e in estados.items() if e]
+    resumen = "Todo en línea" if not caidos else f"{len(caidos)} caído(s): {', '.join(caidos)}"
+    lineas = [f"{nombre}: {err or 'OK'}" for nombre, err in estados.items()]
+    return [f"Reporte diario {hora} (CDMX)", resumen, lineas[0], *lineas[1:]][:8]
+
+
+def reporte(event, context):
+    cfg = config()
+    estados = {nombre: revisar(url) for nombre, url in SERVICIOS}
+    # Todo bien: la confirmación corta. Algo caído: el detalle con la de incidentes.
+    if any(estados.values()):
+        enviados = enviar(cfg, variables_reporte(estados, int(time.time() * 1000)))
+    else:
+        enviados = enviar(cfg, [], cfg["ok_template"])
+    log.info("reporte: enviados=%s estados=%s", enviados, estados)
+    return {"enviados": enviados, "estados": estados}
