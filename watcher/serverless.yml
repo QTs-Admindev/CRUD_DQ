@@ -35,8 +35,12 @@ package:
     - 'handler.py'
 
 functions:
+  # Una sola corrida a la vez y sin reintentos: si se traba, la siguiente revisión
+  # empieza limpia en vez de encimarse o mandar el WhatsApp dos veces.
   check:
     handler: handler.check
+    reservedConcurrency: 1
+    maximumRetryAttempts: 0
     events:
       - schedule:
           rate: rate(5 minutes)
@@ -44,6 +48,8 @@ functions:
   # México no tiene horario de verano: 8:00 y 22:00 CDMX son 14:00 y 4:00 UTC.
   reporte:
     handler: handler.reporte
+    reservedConcurrency: 1
+    maximumRetryAttempts: 0
     events:
       - schedule: cron(0 14 * * ? *)
       - schedule: cron(0 4 * * ? *)
