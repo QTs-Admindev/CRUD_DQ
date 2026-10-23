@@ -42,7 +42,14 @@ SERVICIOS = [
     ("Plataforma de clientes (tms)", "https://tms.quinta.tech/"),
     ("Dashboard (dev)", "https://dev.quinta.tech/"),
     ("Admin", "https://admin.quinta.tech/"),
+    # Responde 503 si el espejo está trabado o atrasado; sin respuesta si se cayó.
+    ("Espejo de Mongo (análisis)", "https://dev-iot.quinta.tech/espejo/salud"),
 ]
+
+
+def cinco(lineas: list[str]) -> list[str]:
+    """La plantilla tiene cinco renglones de estado: lo que sobre va junto en el último."""
+    return lineas[:4] + [" · ".join(lineas[4:])] if len(lineas) > 5 else lineas
 
 
 def config() -> dict:
@@ -90,7 +97,7 @@ def variables(caido: str, error: str, url: str, desde_ms: int, fallas: int,
     detalle = f"{host} · caído desde {desde} (CDMX) · {fallas} revisiones seguidas"
     otros = [f"{nombre}: {'caído' if err else 'OK'}"
              for nombre, err in estados.items() if nombre != caido]
-    return [caido, error or "—", detalle, *otros][:8]
+    return [caido, error or "—", detalle, *cinco(otros)]
 
 
 # ─── WhatsApp ──────────────────────────────────────────────────────────────────
@@ -205,13 +212,13 @@ def check(event, context, estado_cls=Estado):
 # ─── Reporte diario ────────────────────────────────────────────────────────────
 
 def variables_reporte(estados: dict, ahora_ms: int) -> list[str]:
-    """Las 8 variables de la plantilla de incidentes con el estado de los seis
+    """Las 8 variables de la plantilla de incidentes con el estado de todos los
     servicios. El primero va en el detalle porque solo hay cinco renglones."""
     hora = datetime.fromtimestamp(ahora_ms / 1000, CDMX).strftime("%d/%m %H:%M")
     caidos = [n for n, e in estados.items() if e]
     resumen = "Todo en línea" if not caidos else f"{len(caidos)} caído(s): {', '.join(caidos)}"
     lineas = [f"{nombre}: {err or 'OK'}" for nombre, err in estados.items()]
-    return [f"Reporte diario {hora} (CDMX)", resumen, lineas[0], *lineas[1:]][:8]
+    return [f"Reporte diario {hora} (CDMX)", resumen, lineas[0], *cinco(lineas[1:])]
 
 
 def reporte(event, context):

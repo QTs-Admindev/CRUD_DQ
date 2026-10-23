@@ -21,12 +21,13 @@ def _estados(**caidos):
     return e
 
 
-def test_reporte_lleva_los_seis_servicios_en_8_variables():
+def test_reporte_lleva_todos_los_servicios_en_8_variables():
     v = h.variables_reporte(_estados(Admin="HTTP 502"), 1_761_220_800_000)
     assert len(v) == 8 and all(v)
     assert v[0].startswith("Reporte diario") and "(CDMX)" in v[0]
     assert v[1] == "1 caído(s): Admin"
-    assert "Admin: HTTP 502" in v[2:]
+    assert "Admin: HTTP 502" in " · ".join(v[2:])
+    assert "Espejo de Mongo" in v[-1]
     assert h.variables_reporte(_estados(), 0)[1] == "Todo en línea"
 
 
@@ -61,7 +62,7 @@ def test_parpadeo_no_avisa_y_dos_fallas_si(monkeypatch):
     assert len(v) == 8 and all(v)
     assert v[0] == "Admin" and v[1] == "HTTP 502"
     assert "admin.quinta.tech" in v[2] and "2 revisiones" in v[2]
-    assert "Dashboard (dev): OK" in v[3:]
+    assert "Dashboard (dev): OK" in " · ".join(v[3:])
 
 
 def test_no_repite_hasta_6_horas_y_al_volver_reinicia(monkeypatch):
@@ -84,7 +85,7 @@ def test_otro_caido_aparece_en_el_estado(monkeypatch):
     previo, _ = h.ciclo(est, {}, 0, _cfg())
     h.ciclo(est, previo, 300_000, _cfg())
     admin = [v for v in enviados if v[0] == "Admin"][0]
-    assert "Dashboard (dev): caído" in admin
+    assert "Dashboard (dev): caído" in " · ".join(admin)
 
 
 def test_apagado_o_sin_credenciales_no_manda(monkeypatch):
