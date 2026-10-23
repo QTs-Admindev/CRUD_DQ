@@ -23,6 +23,9 @@ provider:
     WHATSAPP_RECIPIENTS: ${env:WHATSAPP_RECIPIENTS, ''}
     WHATSAPP_API_VERSION: ${env:WHATSAPP_API_VERSION, 'v23.0'}
     WHATSAPP_ALERT_IMAGE_URL: ${env:WHATSAPP_ALERT_IMAGE_URL, ''}
+    # Secreto con la cadena de Mongo (mismo usuario que GPSHook) para escribir la
+    # profundidad del alta en Loads (shared/lectura_alta.py). Vacío = no se escribe.
+    MONGO_SECRET: ${env:MONGO_SECRET, 'MONGO_URI'}
   iam:
     role:
       statements:

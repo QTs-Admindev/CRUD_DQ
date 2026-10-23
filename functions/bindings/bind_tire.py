@@ -8,6 +8,7 @@ from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
 from shared.db.lock import with_asset_lock
+from shared.lectura_alta import sembrar
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -142,6 +143,7 @@ def handler(event, context):
                       result="pending", changes={"tire_id": body.tire_id},
                       error=f"deferred sensor sync on mount failed: {e}")
 
+    sembrar(db, body.tire_id)
     if confirmed:
         return ok(rec)
     return pending({**rec, "sync_pending":

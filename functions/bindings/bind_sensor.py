@@ -7,6 +7,7 @@ from shared.config import t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
 from shared.db.lock import with_asset_lock
+from shared.lectura_alta import sembrar
 from shared.smarttyre import verify
 from shared.smarttyre.client import SmartTyreClient
 from shared.utils.clock import now_ms
@@ -127,6 +128,7 @@ def handler(event, context):
                     pass
                 return error(409, "Ese sensor ya está vinculado a otra llanta")
             return sync_fail(f"DB error (bind sensor local): {e}")
+        sembrar(db, tire_id)
         if confirmed:
             return ok({**rec, "synced_to_platform": True})
         return pending({**rec, "synced_to_platform": False,
@@ -147,10 +149,11 @@ def handler(event, context):
               natural_key=sensor.get("sensorCode"), company_id=sensor.get("company_id"),
               daijin_id=sensor.get("daijin_id"), result="pending",
               changes={"tire_id": tire_id, "deferred": "platform sync until tire is mounted"})
-        return ok({**rec, "synced_to_platform": False})
     except Exception as e:
         db.rollback()
         # Camino local puro (no se tocó la plataforma): solo traducir el choque a 409.
         if "Duplicate" in str(e) or "uq_tire_sensor_owner" in str(e):
             return error(409, "Ese sensor ya está vinculado a otra llanta")
         return sync_fail(f"DB error (bind sensor local): {e}")
+    sembrar(db, tire_id)
+    return ok({**rec, "synced_to_platform": False})

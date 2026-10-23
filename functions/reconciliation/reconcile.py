@@ -30,6 +30,7 @@ from shared.audit import audit
 from shared.config import DAJIN_ORG_ID, t
 from shared.db.connection import get_db
 from shared.db.ops import get_by_id, get_where, update
+from shared.lectura_alta import sembrar
 from shared.smarttyre import verify
 from shared.smarttyre.basic_api import DONE, GUARD, TRANSIENT, attempt_delete  # noqa: F401 (TRANSIENT: parte del contrato del módulo)
 from shared.smarttyre.client import SmartTyreClient
@@ -174,6 +175,9 @@ def _sweep_registering(db, st, table, cfg, summary):
             update(db, table, r["id"], fields)
             db.commit()
             summary["resolved"] += 1
+            if table == t("tires"):
+                # El alta que quedó pendiente: ahora ya tiene id en la plataforma.
+                sembrar(db, r["id"])
         except Exception:
             db.rollback()
             summary["errors"] += 1

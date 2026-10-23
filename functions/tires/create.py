@@ -10,6 +10,7 @@ from shared.config import t
 from shared.db.connection import get_db
 from shared.db.lock import asset_lock
 from shared.db.ops import get_by_fields, get_by_id, get_where, insert, update
+from shared.lectura_alta import sembrar
 from shared.tire_events import has_event, record_event
 from shared.reconcile import heal_on_resume
 from shared.smarttyre.client import SmartTyreClient
@@ -269,7 +270,9 @@ def handler(event, context):
         audit(db, event, context, action="create", asset_type="tire", asset_id=local_id,
               natural_key=body.folio, company_id=body.company_id,
               daijin_id=daijin_id, result="success")
-        return ok(rec)
     except Exception as e:
         db.rollback()
         return sync_fail(f"DB error (activate tire, daijin_id={daijin_id}): {e}")
+    # Si ya viene montada y con sensor, el FleetView la muestra con los mm del alta.
+    sembrar(db, local_id)
+    return ok(rec)
